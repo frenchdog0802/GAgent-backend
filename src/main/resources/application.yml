@@ -2,19 +2,27 @@ spring:
   application:
     name: gagent
 
-  # ── PostgreSQL (uncomment when DB is ready, and remove excludes from GagentApplication.java) ──
-  # datasource:
-  #   url: jdbc:postgresql://localhost:5432/gagent
-  #   username: ${DB_USERNAME:postgres}
-  #   password: ${DB_PASSWORD:postgres}
-  #   driver-class-name: org.postgresql.Driver
-  # jpa:
-  #   hibernate:
-  #     ddl-auto: none
-  #   show-sql: false
-  #   properties:
-  #     hibernate:
-  #       dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  # ── PostgreSQL ──
+  datasource:
+    url: jdbc:postgresql://aws-1-us-east-2.pooler.supabase.com:6543/postgres?prepareThreshold=0
+    username: ${DB_USERNAME:postgres.yefgbbtjulretcazsfyz}
+    password: ${DB_PASSWORD:Aa0988068578.}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+
+# ── Application Properties ──
+app:
+  jwt-secret: ${JWT_SECRET:6fa72e20f64b00b6b8c2abf50fca10f11a9e3b8e3f9e056e8e251ad26b2bca8d7a3ce9f1a1df7ab4c1f7f14b9d6d1c9f5df9e6a3c98e7c1d}
 
 server:
-  port: 8080
+  port: ${PORT:8080}
