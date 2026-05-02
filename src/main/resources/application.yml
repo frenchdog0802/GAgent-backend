@@ -40,3 +40,4 @@ openai:
 
 server:
   port: ${PORT}
+  forward-headers-strategy: framework
