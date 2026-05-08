@@ -31,6 +31,12 @@ public class User {
     @Column(name = "google_id")
     private String googleId;
 
+    @Column(name = "google_access_token", length = 2048)
+    private String googleAccessToken;
+
+    @Column(name = "google_refresh_token", length = 2048)
+    private String googleRefreshToken;
+
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
 
