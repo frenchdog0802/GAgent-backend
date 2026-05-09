@@ -121,15 +121,30 @@ public class GagentService {
                             "parameters", Map.of(
                                     "type", "object",
                                     "properties", Map.of(
-                                            "contact_name", Map.of("type", "string", "description", "The name of the contact"),
-                                            "email_address", Map.of("type", "string", "description", "The email address of the contact"),
-                                            "company", Map.of("type", "string", "description", "The company of the contact (optional)"),
-                                            "notes", Map.of("type", "string", "description", "Any notes about the contact (optional)")
-                                    ),
-                                    "required", List.of("contact_name", "email_address")
-                            )
-                    )
-            ));
+                                            "contact_name",
+                                            Map.of("type", "string", "description", "The name of the contact"),
+                                            "email_address",
+                                            Map.of("type", "string", "description", "The email address of the contact"),
+                                            "company",
+                                            Map.of("type", "string", "description",
+                                                    "The company of the contact (optional)"),
+                                            "notes",
+                                            Map.of("type", "string", "description",
+                                                    "Any notes about the contact (optional)")),
+                                    "required", List.of("contact_name", "email_address")))));
+
+            tools.add(Map.of(
+                    "type", "function",
+                    "function", Map.of(
+                            "name", "get_contact_by_name",
+                            "description", "Search for a contact in the user's address book by name.",
+                            "parameters", Map.of(
+                                    "type", "object",
+                                    "properties", Map.of(
+                                            "name_query",
+                                            Map.of("type", "string", "description",
+                                                    "The name or partial name to search for")),
+                                    "required", List.of("name_query")))));
 
             // ==========================================
             // STAGE 1: THE PLANNER
@@ -139,8 +154,6 @@ public class GagentService {
                     "role", "user",
                     "content",
                     "You are an Architect/Planner. Analyze the conversation history and the user's latest request. Break down the actions needed into a sequential list of steps. "
-                            +
-                            "CRITICAL: If the user's latest request is missing essential information needed to perform an action (e.g., recipient email, subject, or body for an email), your plan MUST be a single step to ask the user for the missing details. Do NOT guess or use information from past unrelated messages. "
                             +
                             "Respond strictly with a JSON object containing a 'steps' array of strings. Example: { \"steps\": [\"Step 1 description\", \"Step 2 description\"] }"));
 
@@ -252,8 +265,20 @@ public class GagentService {
                                     Map<String, String> args = objectMapper.readValue(argumentsJson,
                                             new TypeReference<Map<String, String>>() {
                                             });
-                                    result = executeAddContact(userId, args.get("contact_name"), args.get("email_address"),
+                                    result = executeAddContact(userId, args.get("contact_name"),
+                                            args.get("email_address"),
                                             args.get("company"), args.get("notes"));
+                                    if (result.startsWith("Error")) {
+                                        status = "failed";
+                                        errorMsg = result;
+                                    }
+                                } else if ("get_contact_by_name".equals(functionName)) {
+                                    action = "Get Contact";
+                                    toolType = "contact";
+                                    Map<String, String> args = objectMapper.readValue(argumentsJson,
+                                            new TypeReference<Map<String, String>>() {
+                                            });
+                                    result = executeGetContactByName(userId, args.get("name_query"));
                                     if (result.startsWith("Error")) {
                                         status = "failed";
                                         errorMsg = result;
@@ -384,7 +409,8 @@ public class GagentService {
         }
     }
 
-    private String executeAddContact(String userIdStr, String contactName, String emailAddress, String company, String notes) {
+    private String executeAddContact(String userIdStr, String contactName, String emailAddress, String company,
+            String notes) {
         System.out.println("====== EXECUTING ADD CONTACT TOOL ======");
         System.out.println("Name: " + contactName);
         System.out.println("Email: " + emailAddress);
@@ -416,6 +442,36 @@ public class GagentService {
         } catch (Exception e) {
             e.printStackTrace();
             return "Error adding contact: " + e.getMessage();
+        }
+    }
+
+    private String executeGetContactByName(String userIdStr, String nameQuery) {
+        System.out.println("====== EXECUTING GET CONTACT BY NAME TOOL ======");
+        System.out.println("Query: " + nameQuery);
+        System.out.println("=================================================");
+
+        try {
+            Integer userId = Integer.parseInt(userIdStr);
+            List<UserContact> contacts = userContactRepository.findByUserIdAndContactNameContainingIgnoreCase(userId,
+                    nameQuery);
+
+            if (contacts.isEmpty()) {
+                return "No contacts found matching: " + nameQuery;
+            }
+
+            StringBuilder sb = new StringBuilder("Found contacts:\n");
+            for (UserContact contact : contacts) {
+                sb.append("- ").append(contact.getContactName()).append(" (").append(contact.getEmailAddress())
+                        .append(")");
+                if (contact.getCompany() != null && !contact.getCompany().isEmpty()) {
+                    sb.append(" [").append(contact.getCompany()).append("]");
+                }
+                sb.append("\n");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "Error retrieving contact: " + e.getMessage();
         }
     }
 }

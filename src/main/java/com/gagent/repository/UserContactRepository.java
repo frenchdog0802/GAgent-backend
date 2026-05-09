@@ -13,4 +13,6 @@ public interface UserContactRepository extends JpaRepository<UserContact, Intege
     List<UserContact> findByUserId(Integer userId);
     
     Optional<UserContact> findByUserIdAndEmailAddress(Integer userId, String emailAddress);
+
+    List<UserContact> findByUserIdAndContactNameContainingIgnoreCase(Integer userId, String contactName);
 }
