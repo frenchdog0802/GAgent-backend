@@ -11,6 +11,8 @@ import com.gagent.entity.User;
 import com.gagent.repository.ActivityLogRepository;
 import com.gagent.repository.MessageRepository;
 import com.gagent.repository.UserRepository;
+import com.gagent.repository.UserContactRepository;
+import com.gagent.entity.UserContact;
 import com.google.api.client.googleapis.auth.oauth2.GoogleCredential;
 import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
@@ -46,6 +48,7 @@ public class GagentService {
     private final MessageRepository messageRepository;
     private final UserRepository userRepository;
     private final ActivityLogRepository activityLogRepository;
+    private final UserContactRepository userContactRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public RunResponse processRequest(RunRequest request, String userId) {
@@ -75,11 +78,9 @@ public class GagentService {
                     "### Operational Rules:\n" + //
                     "1. **Identify Intent First:** Always determine the user's intent before acting. If the user is just greeting you (e.g., \"Hello,\" \"Hi\"), respond with a friendly, professional greeting and ask how you can help with their Workspace tasks.\n"
                     + //
-                    "2. **Missing Information:** If—and ONLY if—the user explicitly requests an action (like sending an email) but omits details (recipient, subject, or body), you must ask for those specific missing pieces. Do not assume or guess.\n"
+                    "2. **Context Sensitivity:** You have access to conversation history. You may use it for context, but do NOT reuse past email addresses, subjects, or content for new actions unless explicitly told to do so.\n"
                     + //
-                    "3. **Context Sensitivity:** You have access to conversation history. You may use it for context, but do NOT reuse past email addresses, subjects, or content for new actions unless explicitly told to do so.\n"
-                    + //
-                    "4. **Tone:** Be professional, efficient, and helpful.";
+                    "3. **Tone:** Be professional, efficient, and helpful.";
 
             List<Message> history = messageRepository.findByUserIdOrderByCreatedAtAsc(userId);
             List<Map<String, Object>> apiMessages = new ArrayList<>();
@@ -111,6 +112,24 @@ public class GagentService {
                                             "body",
                                             Map.of("type", "string", "description", "The body/content of the email")),
                                     "required", List.of("to_email", "subject", "body")))));
+
+            tools.add(Map.of(
+                    "type", "function",
+                    "function", Map.of(
+                            "name", "add_contact",
+                            "description", "Add a new contact to the user's address book.",
+                            "parameters", Map.of(
+                                    "type", "object",
+                                    "properties", Map.of(
+                                            "contact_name", Map.of("type", "string", "description", "The name of the contact"),
+                                            "email_address", Map.of("type", "string", "description", "The email address of the contact"),
+                                            "company", Map.of("type", "string", "description", "The company of the contact (optional)"),
+                                            "notes", Map.of("type", "string", "description", "Any notes about the contact (optional)")
+                                    ),
+                                    "required", List.of("contact_name", "email_address")
+                            )
+                    )
+            ));
 
             // ==========================================
             // STAGE 1: THE PLANNER
@@ -214,6 +233,7 @@ public class GagentService {
                                 String action = "Unknown Action";
                                 String toolType = "unknown";
 
+                                // use interface
                                 if ("send_email".equals(functionName)) {
                                     action = "Send Email";
                                     toolType = "mail";
@@ -222,6 +242,18 @@ public class GagentService {
                                             });
                                     result = executeSendEmail(userId, args.get("to_email"), args.get("subject"),
                                             args.get("body"));
+                                    if (result.startsWith("Error")) {
+                                        status = "failed";
+                                        errorMsg = result;
+                                    }
+                                } else if ("add_contact".equals(functionName)) {
+                                    action = "Add Contact";
+                                    toolType = "contact";
+                                    Map<String, String> args = objectMapper.readValue(argumentsJson,
+                                            new TypeReference<Map<String, String>>() {
+                                            });
+                                    result = executeAddContact(userId, args.get("contact_name"), args.get("email_address"),
+                                            args.get("company"), args.get("notes"));
                                     if (result.startsWith("Error")) {
                                         status = "failed";
                                         errorMsg = result;
@@ -349,6 +381,41 @@ public class GagentService {
         } catch (Exception e) {
             e.printStackTrace();
             return "Error sending email: " + e.getMessage();
+        }
+    }
+
+    private String executeAddContact(String userIdStr, String contactName, String emailAddress, String company, String notes) {
+        System.out.println("====== EXECUTING ADD CONTACT TOOL ======");
+        System.out.println("Name: " + contactName);
+        System.out.println("Email: " + emailAddress);
+        System.out.println("========================================");
+
+        try {
+            Integer userId = Integer.parseInt(userIdStr);
+            User user = userRepository.findById(userId).orElse(null);
+
+            if (user == null) {
+                return "Error: User not found in database.";
+            }
+
+            if (userContactRepository.findByUserIdAndEmailAddress(userId, emailAddress).isPresent()) {
+                return "Error: Contact with email " + emailAddress + " already exists.";
+            }
+
+            UserContact contact = UserContact.builder()
+                    .user(user)
+                    .contactName(contactName)
+                    .emailAddress(emailAddress)
+                    .company(company)
+                    .notes(notes)
+                    .build();
+
+            userContactRepository.save(contact);
+
+            return "Contact '" + contactName + "' (" + emailAddress + ") successfully added.";
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "Error adding contact: " + e.getMessage();
         }
     }
 }
