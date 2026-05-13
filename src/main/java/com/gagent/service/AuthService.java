@@ -93,6 +93,8 @@ public class AuthService {
                 .id(user.getId())
                 .email(user.getEmail())
                 .userName(user.getUserName())
+                .isGoogleConnected(user.getGoogleAccessToken() != null)
+                .isGoogleLogin(user.getGoogleId() != null)
                 .build();
     }
 

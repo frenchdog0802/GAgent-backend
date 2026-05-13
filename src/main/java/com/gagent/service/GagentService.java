@@ -1,36 +1,21 @@
 package com.gagent.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gagent.dto.RunRequest;
 import com.gagent.dto.RunResponse;
 import com.gagent.entity.ActivityLog;
 import com.gagent.entity.Message;
-import com.gagent.entity.User;
 import com.gagent.repository.ActivityLogRepository;
 import com.gagent.repository.MessageRepository;
 import com.gagent.repository.UserRepository;
+import com.gagent.tool.*;
+import com.gagent.tool.executor.GagentToolExecutor;
 import com.gagent.repository.UserContactRepository;
-import com.gagent.entity.UserContact;
-import com.google.api.client.googleapis.auth.oauth2.GoogleCredential;
-import com.google.api.client.http.javanet.NetHttpTransport;
-import com.google.api.client.json.gson.GsonFactory;
-import com.google.api.services.gmail.Gmail;
-import jakarta.mail.Session;
-import jakarta.mail.internet.InternetAddress;
-import jakarta.mail.internet.MimeMessage;
-import java.io.ByteArrayOutputStream;
-import java.util.Properties;
-import java.util.Base64;
-import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClient;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -39,439 +24,247 @@ import java.util.List;
 import java.util.Map;
 
 @Service
-@RequiredArgsConstructor
 public class GagentService {
 
-    @Value("${openai.api.key:}")
-    private String openAiApiKey;
-
+    private final String openAiApiKey;
     private final MessageRepository messageRepository;
     private final UserRepository userRepository;
     private final ActivityLogRepository activityLogRepository;
     private final UserContactRepository userContactRepository;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+    private final RestClient restClient;
+    private final Map<String, GagentToolExecutor> toolExecutors = new HashMap<>();
+
+    public GagentService(
+            @Value("${openai.api.key:}") String openAiApiKey,
+            MessageRepository messageRepository,
+            UserRepository userRepository,
+            ActivityLogRepository activityLogRepository,
+            UserContactRepository userContactRepository,
+            List<GagentToolExecutor> executors,
+            RestClient.Builder restClientBuilder) {
+        this.openAiApiKey = openAiApiKey;
+        this.messageRepository = messageRepository;
+        this.userRepository = userRepository;
+        this.activityLogRepository = activityLogRepository;
+        this.userContactRepository = userContactRepository;
+        this.restClient = restClientBuilder
+                .baseUrl("https://api.openai.com/v1")
+                .defaultHeader("Authorization", "Bearer " + openAiApiKey)
+                .build();
+        for (GagentToolExecutor executor : executors) {
+            this.toolExecutors.put(executor.getFunctionName(), executor);
+        }
+    }
 
     public RunResponse processRequest(RunRequest request, String userId) {
         if (openAiApiKey == null || openAiApiKey.isEmpty()) {
             return new RunResponse(
-                    "Error: OpenAI API key is not configured. Please set the OPENAI_API_KEY environment variable.",
-                    "error", Instant.now());
+                    "Error: OpenAI API key is not configured.", "error", Instant.now());
         }
 
-        // Save user message to database
-        Message userMessage = Message.builder()
+        // Permission Gatekeeper: Ensure user has authenticated with Google
+        com.gagent.entity.User user = userRepository.findById(Integer.parseInt(userId)).orElse(null);
+        if (user == null || user.getGoogleAccessToken() == null || user.getGoogleAccessToken().isEmpty()) {
+            return new RunResponse("Google Workspace permission required.", "AUTH_REQUIRED", Instant.now());
+        }
+
+        saveUserMessage(request.getMessage(), userId);
+
+        try {
+            List<ChatMessage> apiMessages = buildConversationContext(userId);
+
+            // STAGE 1: PLANNING
+            List<String> steps = planActions(apiMessages);
+
+            // STAGE 2: EXECUTION
+            executeSteps(apiMessages, steps, userId, request.getMessage());
+
+            // STAGE 3: SYNTHESIS
+            String finalContent = synthesizeResponse(apiMessages);
+
+            saveAssistantMessage(finalContent, userId);
+            return new RunResponse(finalContent, "success", Instant.now());
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new RunResponse("Error: " + e.getMessage(), "error", Instant.now());
+        }
+    }
+
+    private void saveUserMessage(String content, String userId) {
+        messageRepository.save(Message.builder()
                 .role("user")
-                .content(request.getMessage())
+                .content(content)
                 .userId(userId)
-                .build();
-        messageRepository.save(userMessage);
+                .build());
+    }
 
+    private void saveAssistantMessage(String content, String userId) {
+        messageRepository.save(Message.builder()
+                .role("assistant")
+                .content(content)
+                .userId(userId)
+                .build());
+    }
+
+    private List<ChatMessage> buildConversationContext(String userId) {
+        String systemPrompt = """
+                You are a capable Google Workspace assistant for THIS user only. Your scope is Gmail and Google Contacts (no Calendar or Drive tools are available—do not claim you can use them).
+
+                Operating principles:
+                - Prefer facts from tool results over assumptions. If a tool fails or returns empty, say so briefly and suggest the next concrete step (e.g. refine search, add contact, check spelling).
+                - Call tools as soon as you have enough parameters; do not narrate long plans instead of acting. One step may require several tool calls (e.g. list then read).
+                - Match the user's language in final replies (e.g. Chinese if they wrote in Chinese).
+
+                Tool discipline:
+                - send_email: requires a real email address in to_email. If the user gives only a person's name, call get_contact_by_name first. If multiple matches appear, pick the best match from tool output or list options for the user—do not invent addresses.
+                - get_contact_by_name: use name_query with the name or distinctive fragment the user provided.
+                - add_contact: use when the user wants to save someone; contact_name and email_address are required unless the tool schema says otherwise.
+                - list_emails: use q with Gmail search syntax when the user filters by sender, subject, unread, date, etc.; set max_results when they ask for "last N" or "a few".
+                - read_email: only after you have message_id from list_emails (or the user pasted an id). Never guess message_id.
+
+                Safety and clarity:
+                - Summarize what you did after tools succeed; if something could not be done, state what blocked it.
+                - Do not fabricate email content, subjects, or addresses not supported by tools or the conversation.
+                """;
+
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(ChatMessage.system(systemPrompt));
+
+        List<Message> history = messageRepository.findByUserIdOrderByCreatedAtAsc(userId);
+        for (Message msg : history) {
+            messages.add(new ChatMessage(msg.getRole(), msg.getContent(), null, null, null));
+        }
+        return messages;
+    }
+
+    private List<String> planActions(List<ChatMessage> apiMessages) {
+        List<ChatMessage> plannerMessages = new ArrayList<>(apiMessages);
+        plannerMessages.add(ChatMessage.user("""
+                Produce a minimal ordered plan to satisfy the latest user message using ONLY these tools: send_email, add_contact, get_contact_by_name, list_emails, read_email. No Calendar/Drive.
+
+                Rules:
+                - One step = one user-visible goal; a step may imply multiple tool calls (e.g. list_emails then read_email).
+                - If send_email needs a recipient address and only a name is known, the plan MUST include resolving the address via get_contact_by_name before send_email.
+                - For "show/read that email" tasks, plan list_emails (with q if user gave filters) before read_email.
+                - Do not add steps for unavailable capabilities.
+
+                Output JSON only, no markdown or prose: {"steps":["...","..."]}
+                """));
+
+        ChatCompletionRequest request = ChatCompletionRequest.of("gpt-4o-mini", plannerMessages)
+                .withResponseFormat(ChatCompletionRequest.ResponseFormat.JSON);
+
+        ChatMessage response = callChatCompletion(request);
         try {
-            RestTemplate restTemplate = new RestTemplate();
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.setBearerAuth(openAiApiKey);
-
-            String systemPrompt = "You are an intelligent Google Workspace AI assistant. Your goal is to help users manage Gmail, Docs, Calendar, and Drive.\n"
-                    + //
-                    "\n" + //
-                    "### Operational Rules:\n" + //
-                    "1. **Identify Intent First:** Always determine the user's intent before acting. If the user is just greeting you (e.g., \"Hello,\" \"Hi\"), respond with a friendly, professional greeting and ask how you can help with their Workspace tasks.\n"
-                    + //
-                    "2. **Context Sensitivity:** You have access to conversation history. You may use it for context, but do NOT reuse past email addresses, subjects, or content for new actions unless explicitly told to do so.\n"
-                    + //
-                    "3. **Tone:** Be professional, efficient, and helpful.";
-
-            List<Message> history = messageRepository.findByUserIdOrderByCreatedAtAsc(userId);
-            List<Map<String, Object>> apiMessages = new ArrayList<>();
-
-            // Add system prompt
-            apiMessages.add(Map.of("role", "system", "content", systemPrompt));
-
-            // Load history
-            for (Message msg : history) {
-                if (msg.getRole() != null && msg.getContent() != null) {
-                    apiMessages.add(new HashMap<>(Map.of("role", msg.getRole(), "content", msg.getContent())));
-                }
-            }
-
-            // Define the tools
-            List<Map<String, Object>> tools = new ArrayList<>();
-            tools.add(Map.of(
-                    "type", "function",
-                    "function", Map.of(
-                            "name", "send_email",
-                            "description", "Send an email to a specified recipient.",
-                            "parameters", Map.of(
-                                    "type", "object",
-                                    "properties", Map.of(
-                                            "to_email",
-                                            Map.of("type", "string", "description", "The recipient's email address"),
-                                            "subject",
-                                            Map.of("type", "string", "description", "The subject of the email"),
-                                            "body",
-                                            Map.of("type", "string", "description", "The body/content of the email")),
-                                    "required", List.of("to_email", "subject", "body")))));
-
-            tools.add(Map.of(
-                    "type", "function",
-                    "function", Map.of(
-                            "name", "add_contact",
-                            "description", "Add a new contact to the user's address book.",
-                            "parameters", Map.of(
-                                    "type", "object",
-                                    "properties", Map.of(
-                                            "contact_name",
-                                            Map.of("type", "string", "description", "The name of the contact"),
-                                            "email_address",
-                                            Map.of("type", "string", "description", "The email address of the contact"),
-                                            "company",
-                                            Map.of("type", "string", "description",
-                                                    "The company of the contact (optional)"),
-                                            "notes",
-                                            Map.of("type", "string", "description",
-                                                    "Any notes about the contact (optional)")),
-                                    "required", List.of("contact_name", "email_address")))));
-
-            tools.add(Map.of(
-                    "type", "function",
-                    "function", Map.of(
-                            "name", "get_contact_by_name",
-                            "description", "Search for a contact in the user's address book by name.",
-                            "parameters", Map.of(
-                                    "type", "object",
-                                    "properties", Map.of(
-                                            "name_query",
-                                            Map.of("type", "string", "description",
-                                                    "The name or partial name to search for")),
-                                    "required", List.of("name_query")))));
-
-            // ==========================================
-            // STAGE 1: THE PLANNER
-            // ==========================================
-            List<Map<String, Object>> plannerMessages = new ArrayList<>(apiMessages);
-            plannerMessages.add(Map.of(
-                    "role", "user",
-                    "content",
-                    "You are an Architect/Planner. Analyze the conversation history and the user's latest request. Break down the actions needed into a sequential list of steps. "
-                            +
-                            "Respond strictly with a JSON object containing a 'steps' array of strings. Example: { \"steps\": [\"Step 1 description\", \"Step 2 description\"] }"));
-
-            Map<String, Object> plannerRequestBody = new HashMap<>();
-            plannerRequestBody.put("model", "gpt-4o-mini");
-            plannerRequestBody.put("messages", plannerMessages);
-            plannerRequestBody.put("response_format", Map.of("type", "json_object"));
-
-            HttpEntity<Map<String, Object>> plannerEntity = new HttpEntity<>(plannerRequestBody, headers);
-            ResponseEntity<Map> plannerResponse = restTemplate.postForEntity(
-                    "https://api.openai.com/v1/chat/completions",
-                    plannerEntity,
-                    Map.class);
-
-            Map<String, Object> plannerBody = plannerResponse.getBody();
-            List<String> steps = new ArrayList<>();
-            if (plannerBody != null && plannerBody.containsKey("choices")) {
-                List<Map<String, Object>> choices = (List<Map<String, Object>>) plannerBody.get("choices");
-                if (!choices.isEmpty()) {
-                    Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
-                    String content = (String) message.get("content");
-                    System.out.println("====== PLAN GENERATED ======\n" + content);
-
-                    try {
-                        Map<String, List<String>> planData = objectMapper.readValue(content,
-                                new TypeReference<Map<String, List<String>>>() {
-                                });
-                        if (planData.containsKey("steps")) {
-                            steps = planData.get("steps");
-                        }
-                    } catch (Exception e) {
-                        System.err.println("Failed to parse plan JSON: " + e.getMessage());
-                    }
-                }
-            }
-
-            // Fallback if planning fails
-            if (steps.isEmpty()) {
-                steps.add("Analyze and fulfill the user's request directly.");
-            }
-
-            // ==========================================
-            // STAGE 2: THE EXECUTOR
-            // ==========================================
-            for (int i = 0; i < steps.size(); i++) {
-                String currentStep = steps.get(i);
-                System.out.println("\n--- Executing Step " + (i + 1) + " of " + steps.size() + " ---");
-
-                // Tell the LLM which step it is on
-                apiMessages.add(Map.of(
-                        "role", "user",
-                        "content",
-                        "[SYSTEM INSTRUCTION] You are on step " + (i + 1) + " of " + steps.size() + ": " + currentStep
-                                + ". " +
-                                "Please execute the tool for this step or provide your thought process. Only perform this specific step."));
-
-                Map<String, Object> execRequestBody = new HashMap<>();
-                execRequestBody.put("model", "gpt-4o-mini");
-                execRequestBody.put("messages", apiMessages);
-                execRequestBody.put("tools", tools);
-
-                HttpEntity<Map<String, Object>> execEntity = new HttpEntity<>(execRequestBody, headers);
-                ResponseEntity<Map> execResponse = restTemplate.postForEntity(
-                        "https://api.openai.com/v1/chat/completions",
-                        execEntity,
-                        Map.class);
-
-                Map<String, Object> execBody = execResponse.getBody();
-                if (execBody != null && execBody.containsKey("choices")) {
-                    List<Map<String, Object>> choices = (List<Map<String, Object>>) execBody.get("choices");
-                    if (!choices.isEmpty()) {
-                        Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
-
-                        // Append the LLM's response to history
-                        apiMessages.add(message);
-
-                        // If the LLM decided to use a tool
-                        if (message.containsKey("tool_calls") && message.get("tool_calls") != null) {
-                            List<Map<String, Object>> toolCalls = (List<Map<String, Object>>) message.get("tool_calls");
-
-                            for (Map<String, Object> toolCall : toolCalls) {
-                                String toolCallId = (String) toolCall.get("id");
-                                Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
-                                String functionName = (String) function.get("name");
-                                String argumentsJson = (String) function.get("arguments");
-
-                                String result = "";
-                                String status = "success";
-                                String errorMsg = null;
-                                String action = "Unknown Action";
-                                String toolType = "unknown";
-
-                                // use interface
-                                if ("send_email".equals(functionName)) {
-                                    action = "Send Email";
-                                    toolType = "mail";
-                                    Map<String, String> args = objectMapper.readValue(argumentsJson,
-                                            new TypeReference<Map<String, String>>() {
-                                            });
-                                    result = executeSendEmail(userId, args.get("to_email"), args.get("subject"),
-                                            args.get("body"));
-                                    if (result.startsWith("Error")) {
-                                        status = "failed";
-                                        errorMsg = result;
-                                    }
-                                } else if ("add_contact".equals(functionName)) {
-                                    action = "Add Contact";
-                                    toolType = "contact";
-                                    Map<String, String> args = objectMapper.readValue(argumentsJson,
-                                            new TypeReference<Map<String, String>>() {
-                                            });
-                                    result = executeAddContact(userId, args.get("contact_name"),
-                                            args.get("email_address"),
-                                            args.get("company"), args.get("notes"));
-                                    if (result.startsWith("Error")) {
-                                        status = "failed";
-                                        errorMsg = result;
-                                    }
-                                } else if ("get_contact_by_name".equals(functionName)) {
-                                    action = "Get Contact";
-                                    toolType = "contact";
-                                    Map<String, String> args = objectMapper.readValue(argumentsJson,
-                                            new TypeReference<Map<String, String>>() {
-                                            });
-                                    result = executeGetContactByName(userId, args.get("name_query"));
-                                    if (result.startsWith("Error")) {
-                                        status = "failed";
-                                        errorMsg = result;
-                                    }
-                                } else {
-                                    result = "Error: Unknown function.";
-                                    status = "failed";
-                                    errorMsg = result;
-                                }
-
-                                ActivityLog activityLog = ActivityLog.builder()
-                                        .userId(userId)
-                                        .timestamp(Instant.now())
-                                        .command(request.getMessage())
-                                        .action(action)
-                                        .tool(toolType)
-                                        .status(status)
-                                        .error(errorMsg)
-                                        .build();
-                                activityLogRepository.save(activityLog);
-
-                                // Add tool response to messages
-                                Map<String, Object> toolMessage = new HashMap<>();
-                                toolMessage.put("role", "tool");
-                                toolMessage.put("tool_call_id", toolCallId);
-                                toolMessage.put("name", functionName);
-                                toolMessage.put("content", result);
-                                apiMessages.add(toolMessage);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ==========================================
-            // STAGE 3: FINAL SYNTHESIS
-            // ==========================================
-            apiMessages.add(Map.of(
-                    "role", "user",
-                    "content",
-                    "[SYSTEM INSTRUCTION] All planned steps have been executed. Please provide the final response to the user summarizing what was accomplished."));
-
-            Map<String, Object> finalRequestBody = new HashMap<>();
-            finalRequestBody.put("model", "gpt-4o-mini");
-            finalRequestBody.put("messages", apiMessages);
-            // No tools provided here so it is forced to answer with text
-
-            HttpEntity<Map<String, Object>> finalEntity = new HttpEntity<>(finalRequestBody, headers);
-            ResponseEntity<Map> finalResponse = restTemplate.postForEntity(
-                    "https://api.openai.com/v1/chat/completions",
-                    finalEntity,
-                    Map.class);
-
-            Map<String, Object> finalBody = finalResponse.getBody();
-            if (finalBody != null && finalBody.containsKey("choices")) {
-                List<Map<String, Object>> choices = (List<Map<String, Object>>) finalBody.get("choices");
-                if (!choices.isEmpty()) {
-                    Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
-                    String finalContent = (String) message.get("content");
-
-                    // Save final assistant message to database
-                    Message aiMessage = Message.builder()
-                            .role("assistant")
-                            .content(finalContent)
-                            .userId(userId)
-                            .build();
-                    messageRepository.save(aiMessage);
-
-                    return new RunResponse(finalContent, "success", Instant.now());
-                }
-            }
-
-            return new RunResponse("Error: Agent reached the end but could not generate a final response.", "error",
-                    Instant.now());
-
+            Map<String, List<String>> planData = objectMapper.readValue(response.content(),
+                    new TypeReference<Map<String, List<String>>>() {
+                    });
+            return planData.getOrDefault("steps", List.of("Fulfill the user's request directly."));
         } catch (Exception e) {
-            e.printStackTrace();
-            return new RunResponse("Error calling OpenAI API: " + e.getMessage(), "error", Instant.now());
+            return List.of("Fulfill the user's request directly.");
         }
     }
 
-    private String executeSendEmail(String userIdStr, String toEmail, String subject, String body) {
-        System.out.println("====== EXECUTING SEND EMAIL TOOL ======");
-        System.out.println("To: " + toEmail);
-        System.out.println("Subject: " + subject);
-        System.out.println("Body: " + body);
-        System.out.println("=======================================");
+    private void executeSteps(List<ChatMessage> apiMessages, List<String> steps, String userId, String userQuery) {
+        List<Tool> tools = WorkspaceTools.getTools();
 
-        try {
-            Integer userId = Integer.parseInt(userIdStr);
-            User user = userRepository.findById(userId).orElse(null);
+        for (int i = 0; i < steps.size(); i++) {
+            apiMessages.add(ChatMessage.user("[SYSTEM] Step " + (i + 1) + " of " + steps.size() + ": " + steps.get(i)));
 
-            if (user == null) {
-                return "Error: User not found in database.";
-            }
-            if (user.getGoogleAccessToken() == null || user.getGoogleAccessToken().isEmpty()) {
-                return "Error: Google Access Token is missing. The user must sign in with Google to send emails.";
-            }
+            boolean stepComplete = false;
+            while (!stepComplete) {
+                ChatCompletionRequest request = ChatCompletionRequest.of("gpt-4o-mini", apiMessages).withTools(tools);
+                ChatMessage assistantResponse = callChatCompletion(request);
+                apiMessages.add(assistantResponse);
 
-            GoogleCredential credential = new GoogleCredential().setAccessToken(user.getGoogleAccessToken());
-            Gmail service = new Gmail.Builder(new NetHttpTransport(), GsonFactory.getDefaultInstance(), credential)
-                    .setApplicationName("Gagent")
-                    .build();
-
-            Properties props = new Properties();
-            Session session = Session.getDefaultInstance(props, null);
-
-            MimeMessage email = new MimeMessage(session);
-            email.setFrom(new InternetAddress(user.getEmail()));
-            email.addRecipient(jakarta.mail.Message.RecipientType.TO, new InternetAddress(toEmail));
-            email.setSubject(subject);
-            email.setText(body);
-
-            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-            email.writeTo(buffer);
-            byte[] bytes = buffer.toByteArray();
-            String encodedEmail = Base64.getUrlEncoder().encodeToString(bytes);
-
-            com.google.api.services.gmail.model.Message message = new com.google.api.services.gmail.model.Message();
-            message.setRaw(encodedEmail);
-
-            service.users().messages().send("me", message).execute();
-
-            return "Email successfully sent to " + toEmail + " with subject '" + subject + "'.";
-        } catch (Exception e) {
-            e.printStackTrace();
-            return "Error sending email: " + e.getMessage();
-        }
-    }
-
-    private String executeAddContact(String userIdStr, String contactName, String emailAddress, String company,
-            String notes) {
-        System.out.println("====== EXECUTING ADD CONTACT TOOL ======");
-        System.out.println("Name: " + contactName);
-        System.out.println("Email: " + emailAddress);
-        System.out.println("========================================");
-
-        try {
-            Integer userId = Integer.parseInt(userIdStr);
-            User user = userRepository.findById(userId).orElse(null);
-
-            if (user == null) {
-                return "Error: User not found in database.";
-            }
-
-            if (userContactRepository.findByUserIdAndEmailAddress(userId, emailAddress).isPresent()) {
-                return "Error: Contact with email " + emailAddress + " already exists.";
-            }
-
-            UserContact contact = UserContact.builder()
-                    .user(user)
-                    .contactName(contactName)
-                    .emailAddress(emailAddress)
-                    .company(company)
-                    .notes(notes)
-                    .build();
-
-            userContactRepository.save(contact);
-
-            return "Contact '" + contactName + "' (" + emailAddress + ") successfully added.";
-        } catch (Exception e) {
-            e.printStackTrace();
-            return "Error adding contact: " + e.getMessage();
-        }
-    }
-
-    private String executeGetContactByName(String userIdStr, String nameQuery) {
-        System.out.println("====== EXECUTING GET CONTACT BY NAME TOOL ======");
-        System.out.println("Query: " + nameQuery);
-        System.out.println("=================================================");
-
-        try {
-            Integer userId = Integer.parseInt(userIdStr);
-            List<UserContact> contacts = userContactRepository.findByUserIdAndContactNameContainingIgnoreCase(userId,
-                    nameQuery);
-
-            if (contacts.isEmpty()) {
-                return "No contacts found matching: " + nameQuery;
-            }
-
-            StringBuilder sb = new StringBuilder("Found contacts:\n");
-            for (UserContact contact : contacts) {
-                sb.append("- ").append(contact.getContactName()).append(" (").append(contact.getEmailAddress())
-                        .append(")");
-                if (contact.getCompany() != null && !contact.getCompany().isEmpty()) {
-                    sb.append(" [").append(contact.getCompany()).append("]");
+                if (assistantResponse.toolCalls() != null && !assistantResponse.toolCalls().isEmpty()) {
+                    processToolCalls(assistantResponse.toolCalls(), apiMessages, userId, userQuery);
+                } else {
+                    stepComplete = true;
                 }
-                sb.append("\n");
             }
-            return sb.toString();
-        } catch (Exception e) {
-            e.printStackTrace();
-            return "Error retrieving contact: " + e.getMessage();
         }
+    }
+
+    private void processToolCalls(List<ToolCall> toolCalls, List<ChatMessage> apiMessages, String userId, String userQuery) {
+        for (ToolCall toolCall : toolCalls) {
+            String functionName = toolCall.function().name();
+            String result;
+            String status = "success";
+
+            GagentToolExecutor executor = toolExecutors.get(functionName);
+            if (executor != null) {
+                try {
+                    Map<String, Object> args = objectMapper.readValue(toolCall.function().arguments(),
+                            new TypeReference<Map<String, Object>>() {
+                            });
+                    result = executor.execute(userId, args);
+                    if (result.startsWith("Error")) status = "failed";
+                } catch (Exception e) {
+                    result = "Error parsing arguments: " + e.getMessage();
+                    status = "failed";
+                }
+            } else {
+                result = "Error: Unknown function.";
+                status = "failed";
+            }
+
+            logActivity(userId, userQuery, functionName, status, result);
+            apiMessages.add(ChatMessage.tool(toolCall.id(), functionName, result));
+        }
+    }
+
+    private void logActivity(String userId, String query, String action, String status, String result) {
+        String toolStr = "docs";
+        if (action != null) {
+            if (action.contains("email")) {
+                toolStr = "mail";
+            } else if (action.contains("contact")) {
+                toolStr = "contacts";
+            } else if (action.contains("calendar")) {
+                toolStr = "calendar";
+            }
+        }
+        activityLogRepository.save(ActivityLog.builder()
+                .userId(userId)
+                .timestamp(Instant.now())
+                .command(query)
+                .action(action)
+                .tool(toolStr)
+                .status(status)
+                .error(status.equals("failed") ? result : null)
+                .build());
+    }
+
+    private String synthesizeResponse(List<ChatMessage> apiMessages) {
+        apiMessages.add(ChatMessage.user("""
+                [SYSTEM] Write the final user-facing reply.
+
+                Use the conversation and tool results above: state what was done (or attempted), key facts (subjects, times, addresses) only when they matter, and clearly mention any failure or missing data.
+                Be concise. Match the user's language. Do not expose raw internal step labels unless helpful.
+                """));
+        ChatCompletionRequest request = ChatCompletionRequest.of("gpt-4o-mini", apiMessages);
+        return callChatCompletion(request).content();
+    }
+
+    private ChatMessage callChatCompletion(ChatCompletionRequest request) {
+        ResponseEntity<Map> response = restClient.post()
+                .uri("/chat/completions")
+                .body(request)
+                .retrieve()
+                .toEntity(Map.class);
+
+        Map<String, Object> body = response.getBody();
+        if (body != null && body.containsKey("choices")) {
+            List<Map<String, Object>> choices = (List<Map<String, Object>>) body.get("choices");
+            if (!choices.isEmpty()) {
+                Map<String, Object> messageMap = (Map<String, Object>) choices.get(0).get("message");
+                return objectMapper.convertValue(messageMap, ChatMessage.class);
+            }
+        }
+        throw new RuntimeException("Empty response from OpenAI");
     }
 }
