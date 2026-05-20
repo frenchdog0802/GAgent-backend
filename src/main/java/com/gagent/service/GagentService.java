@@ -33,6 +33,7 @@ public class GagentService {
     private final UserRepository userRepository;
     private final ActivityLogRepository activityLogRepository;
     private final UserContactRepository userContactRepository;
+    private final ChatService chatService;
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     private final RestClient restClient;
@@ -44,6 +45,7 @@ public class GagentService {
             UserRepository userRepository,
             ActivityLogRepository activityLogRepository,
             UserContactRepository userContactRepository,
+            ChatService chatService,
             List<GagentToolExecutor> executors,
             RestClient.Builder restClientBuilder) {
         this.openAiApiKey = openAiApiKey;
@@ -51,6 +53,7 @@ public class GagentService {
         this.userRepository = userRepository;
         this.activityLogRepository = activityLogRepository;
         this.userContactRepository = userContactRepository;
+        this.chatService = chatService;
         this.restClient = restClientBuilder
                 .baseUrl("https://api.openai.com/v1")
                 .defaultHeader("Authorization", "Bearer " + openAiApiKey)
@@ -78,10 +81,14 @@ public class GagentService {
             promptMessage += "\n\n[Attached file: " + request.getAttachmentName() + ", S3 Key: " + request.getAttachmentKey() + "]";
         }
 
-        saveUserMessage(promptMessage, userId);
+        Long sessionId = request.getSessionId();
+        saveUserMessage(promptMessage, userId, sessionId);
+        if (sessionId != null) {
+            chatService.updateSessionTitleFromFirstMessage(sessionId, promptMessage);
+        }
 
         try {
-            List<ChatMessage> apiMessages = buildConversationContext(userId, user);
+            List<ChatMessage> apiMessages = buildConversationContext(userId, user, sessionId);
             String latestUserMessage = extractLatestUserMessage(apiMessages);
 
             // STAGE 1: PLANNING
@@ -98,7 +105,10 @@ public class GagentService {
             // STAGE 3: SYNTHESIS
             String finalContent = synthesizeResponse(apiMessages, latestUserMessage, !steps.isEmpty());
 
-            saveAssistantMessage(finalContent, userId);
+            saveAssistantMessage(finalContent, userId, sessionId);
+            if (sessionId != null) {
+                chatService.touchSession(sessionId);
+            }
             return new RunResponse(finalContent, "success", Instant.now());
 
         } catch (Exception e) {
@@ -107,19 +117,21 @@ public class GagentService {
         }
     }
 
-    private void saveUserMessage(String content, String userId) {
+    private void saveUserMessage(String content, String userId, Long sessionId) {
         messageRepository.save(Message.builder()
                 .role("user")
                 .content(content)
                 .userId(userId)
+                .sessionId(sessionId)
                 .build());
     }
 
-    private void saveAssistantMessage(String content, String userId) {
+    private void saveAssistantMessage(String content, String userId, Long sessionId) {
         messageRepository.save(Message.builder()
                 .role("assistant")
                 .content(content)
                 .userId(userId)
+                .sessionId(sessionId)
                 .build());
     }
 
@@ -133,7 +145,7 @@ public class GagentService {
         return "";
     }
 
-    private List<ChatMessage> buildConversationContext(String userId, com.gagent.entity.User user) {
+    private List<ChatMessage> buildConversationContext(String userId, com.gagent.entity.User user, Long sessionId) {
         String accountContext = user != null
                 ? "\n\nAuthenticated account (use for identity questions like \"who am I?\"):\n- Name: "
                         + user.getUserName() + "\n- Email: " + user.getEmail()
@@ -147,7 +159,7 @@ public class GagentService {
                 - Do not re-run or repeat actions from earlier turns unless the latest message explicitly asks (e.g. "send it again", "do the same thing").
                 - Prefer facts from tool results over assumptions. If a tool fails or returns empty, say so briefly and suggest the next concrete step (e.g. refine search, add contact, check spelling).
                 - Call tools as soon as you have enough parameters; do not narrate long plans instead of acting. One step may require several tool calls (e.g. list then read).
-                - Match the user's language in final replies (e.g. Chinese if they wrote in Chinese).
+                - Match the user's language in final replies.
                 - When the latest user message includes an attached file marker like "[Attached file: <name>, S3 Key: <key>]", use that S3 key exactly as s3_file_key and use the provided filename unless the user asks for a different Drive filename.
                 """
                 + accountContext
@@ -175,7 +187,12 @@ public class GagentService {
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(ChatMessage.system(systemPrompt));
 
-        List<Message> history = messageRepository.findByUserIdOrderByCreatedAtAsc(userId);
+        List<Message> history;
+        if (sessionId != null) {
+            history = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        } else {
+            history = messageRepository.findByUserIdOrderByCreatedAtAsc(userId);
+        }
         for (Message msg : history) {
             messages.add(new ChatMessage(msg.getRole(), msg.getContent(), null, null, null));
         }

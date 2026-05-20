@@ -29,6 +29,9 @@ public class Message {
     @Column(name = "user_id")
     private String userId;
 
+    @Column(name = "session_id")
+    private Long sessionId;
+
     @PrePersist
     protected void onCreate() {
         if (this.createdAt == null) {

@@ -11,4 +11,5 @@ public class RunRequest {
     private String message;
     private String attachmentKey;
     private String attachmentName;
+    private Long sessionId;
 }
