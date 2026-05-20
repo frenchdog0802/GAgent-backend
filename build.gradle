@@ -44,7 +44,12 @@ dependencies {
     // Google API & Gmail
     implementation 'com.google.api-client:google-api-client:2.4.0'
     implementation 'com.google.apis:google-api-services-gmail:v1-rev20220404-2.0.0'
+    implementation 'com.google.apis:google-api-services-drive:v3-rev20230822-2.0.0'
     implementation 'org.springframework.boot:spring-boot-starter-mail'
+
+    // AWS S3
+    implementation platform('software.amazon.awssdk:bom:2.25.11')
+    implementation 'software.amazon.awssdk:s3'
 }
 
 tasks.named('test') {

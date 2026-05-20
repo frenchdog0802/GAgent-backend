@@ -8,10 +8,16 @@ public class WorkspaceTools {
     public static List<Tool> getTools() {
         return List.of(
             sendEmailTool(),
+            sendEmailWithAttachmentTool(),
             addContactTool(),
             getContactByNameTool(),
             listEmailsTool(),
-            readEmailTool()
+            readEmailTool(),
+            listDriveFilesTool(),
+            readDriveFileTool(),
+            createDriveFileTool(),
+            writeDriveFileTool(),
+            uploadDriveFileFromAttachmentTool()
         );
     }
 
@@ -31,6 +37,25 @@ public class WorkspaceTools {
             )
         ));
     }
+
+    private static Tool sendEmailWithAttachmentTool() {
+        return Tool.function(new Function(
+            "send_email_with_attachment",
+            """
+                    Send an email with a file attachment via the user's Gmail.
+                    Requires an s3_file_key that the user provides after uploading a file.""",
+            Parameters.object(
+                Map.of(
+                    "to_email", new Property("string", "RFC5322 recipient address only."),
+                    "subject", new Property("string", "Email subject line."),
+                    "body", new Property("string", "Plain-text body."),
+                    "s3_file_key", new Property("string", "The S3 file key of the uploaded attachment.")
+                ),
+                List.of("to_email", "subject", "body", "s3_file_key")
+            )
+        ));
+    }
+
 
     private static Tool addContactTool() {
         return Tool.function(new Function(
@@ -92,6 +117,81 @@ public class WorkspaceTools {
                     "message_id", new Property("string", "Exact Gmail API message id from a prior list_emails result.")
                 ),
                 List.of("message_id")
+            )
+        ));
+    }
+
+    private static Tool listDriveFilesTool() {
+        return Tool.function(new Function(
+            "list_drive_files",
+            """
+                    List files from the user's Google Drive. Use query to filter by name, mimeType, etc.""",
+            Parameters.object(
+                Map.of(
+                    "query", new Property("string", "Google Drive search query (e.g. 'name contains \"report\"'). Optional."),
+                    "max_results", new Property("integer", "Max results to return (default 10).")
+                ),
+                List.of()
+            )
+        ));
+    }
+
+    private static Tool readDriveFileTool() {
+        return Tool.function(new Function(
+            "read_drive_file",
+            """
+                    Read the contents of a text-based file from Google Drive. Needs the exact file ID.""",
+            Parameters.object(
+                Map.of(
+                    "file_id", new Property("string", "Exact Google Drive file ID.")
+                ),
+                List.of("file_id")
+            )
+        ));
+    }
+
+    private static Tool createDriveFileTool() {
+        return Tool.function(new Function(
+            "create_drive_file",
+            """
+                    Create a new file in Google Drive with the specified name and content.""",
+            Parameters.object(
+                Map.of(
+                    "name", new Property("string", "Name of the new file."),
+                    "content", new Property("string", "Text content to write to the file.")
+                ),
+                List.of("name", "content")
+            )
+        ));
+    }
+
+    private static Tool writeDriveFileTool() {
+        return Tool.function(new Function(
+            "write_drive_file",
+            """
+                    Update the contents of an existing Google Drive file.""",
+            Parameters.object(
+                Map.of(
+                    "file_id", new Property("string", "Exact Google Drive file ID to update."),
+                    "content", new Property("string", "New text content to replace the file's content.")
+                ),
+                List.of("file_id", "content")
+            )
+        ));
+    }
+
+    private static Tool uploadDriveFileFromAttachmentTool() {
+        return Tool.function(new Function(
+            "upload_drive_file_from_attachment",
+            """
+                    Upload an attached file to Google Drive.
+                    Requires an s3_file_key that the user provides after uploading a file.""",
+            Parameters.object(
+                Map.of(
+                    "s3_file_key", new Property("string", "The S3 file key of the uploaded attachment."),
+                    "file_name", new Property("string", "The desired name of the file in Google Drive.")
+                ),
+                List.of("s3_file_key", "file_name")
             )
         ));
     }

@@ -39,7 +39,7 @@ public class GoogleAuthController {
     @GetMapping("/connect")
     public Map<String, String> connect(HttpServletRequest request, @RequestParam String userId) {
         String redirectUri = buildRedirectUri(request);
-        String scope = "openid email profile https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly";
+        String scope = "openid email profile https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive";
 
         String url = UriComponentsBuilder.fromUriString("https://accounts.google.com/o/oauth2/v2/auth")
                 .queryParam("client_id", clientId)

@@ -9,4 +9,6 @@ import lombok.AllArgsConstructor;
 @AllArgsConstructor
 public class RunRequest {
     private String message;
+    private String attachmentKey;
+    private String attachmentName;
 }

@@ -6,7 +6,7 @@ This document helps you (and different coding agents/models) quickly restore con
 
 - Stack: Java 17 + Spring Boot (Gradle Wrapper) + Spring Security + JPA + PostgreSQL
 - OpenAPI: `springdoc-openapi` (usually available at `GET /swagger-ui.html` or `GET /swagger-ui/index.html`)
-- Default port: controlled by `PORT` (locally typically `8080`)
+- Default port: controlled by `PORT` (locally typically `8081`)
 - Config: `src/main/resources/application.yml`, and local `.env` is loaded via `spring.config.import=optional:file:.env[.properties]`
 
 ## Requirements
@@ -60,19 +60,19 @@ Notes:
 
 ## Docker
 
-This project includes a `Dockerfile` (multi-stage build, runs the jar, exposes `8080` by default).
+This project includes a `Dockerfile` (multi-stage build, runs the jar, exposes `8081` by default).
 
 Example (from `gagent-backend/`):
 
 ```bash
 docker build -t gagent-backend .
-docker run --rm -p 8080:8080 --env-file .env gagent-backend
+docker run --rm -p 8081:8081 --env-file .env gagent-backend
 ```
 
 ## Integration expectations
 
 - Frontend default: `http://localhost:5173`
-- Backend default: `http://localhost:8080`
+- Backend default: `http://localhost:8081`
 - If you touch CORS / OAuth redirects: start by locating the Spring Security config and allowed origins, then change them intentionally.
 
 ## Working agreements for Coding Agents

@@ -4,31 +4,26 @@ import com.gagent.entity.User;
 import com.gagent.repository.UserRepository;
 import com.gagent.service.GoogleWorkspaceService;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
 
-@Slf4j
 @Component
 @RequiredArgsConstructor
-public class SendEmailExecutor implements GagentToolExecutor {
+public class ListDriveFilesExecutor implements GagentToolExecutor {
 
     private final UserRepository userRepository;
     private final GoogleWorkspaceService googleWorkspaceService;
 
     @Override
     public String getFunctionName() {
-        return "send_email";
+        return "list_drive_files";
     }
 
     @Override
     public String execute(String userIdStr, Map<String, Object> arguments) {
-        String toEmail = (String) arguments.get("to_email");
-        String subject = (String) arguments.get("subject");
-        String body = (String) arguments.get("body");
-
-        log.info("send_email invoked (subjectLength={})", subject != null ? subject.length() : 0);
+        String query = (String) arguments.get("query");
+        Integer maxResults = (Integer) arguments.get("max_results");
 
         try {
             Integer userId = Integer.parseInt(userIdStr);
@@ -38,10 +33,10 @@ public class SendEmailExecutor implements GagentToolExecutor {
                 return "Error: User not found in database.";
             }
 
-            return googleWorkspaceService.sendEmail(user, toEmail, subject, body);
+            return googleWorkspaceService.listDriveFiles(user, maxResults, query);
         } catch (Exception e) {
             e.printStackTrace();
-            return "Error sending email: " + e.getMessage();
+            return "Error listing drive files: " + e.getMessage();
         }
     }
 }

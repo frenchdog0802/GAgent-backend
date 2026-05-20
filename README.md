@@ -48,12 +48,12 @@ com.gagent
 java -jar build/libs/gagent-0.0.1-SNAPSHOT.jar
 ```
 
-The server starts on **http://localhost:8080**.
+The server starts on **http://localhost:8081**.
 
 ### Verify
 
 ```bash
-curl http://localhost:8080/api/hello
+curl http://localhost:8081/api/hello
 ```
 
 Expected response:

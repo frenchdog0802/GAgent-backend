@@ -6,6 +6,7 @@ import com.gagent.service.GagentService;
 import com.gagent.config.JwtUtil;
 import com.gagent.entity.ActivityLog;
 import com.gagent.repository.ActivityLogRepository;
+import com.gagent.service.S3Service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -24,6 +25,7 @@ public class GagentController {
     private final GagentService gagentService;
     private final ActivityLogRepository activityLogRepository;
     private final JwtUtil jwtUtil;
+    private final S3Service s3Service;
 
     @PostMapping("/run")
     @SecurityRequirement(name = "bearerAuth")
@@ -41,6 +43,7 @@ public class GagentController {
         }
 
         String userId = jwtUtil.getUserIdFromToken(token);
+
 
         log.info("Received run request from user {}: {}", userId, request.getMessage());
         RunResponse response = gagentService.processRequest(request, userId);
@@ -66,4 +69,29 @@ public class GagentController {
         Iterable<ActivityLog> logs = activityLogRepository.findByUserIdOrderByTimestampDesc(userId);
         return ResponseEntity.ok(logs);
     }
+
+    @PostMapping("/upload")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<String> uploadFile(
+            @Parameter(hidden = true) @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
+        
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing or invalid Authorization header");
+        }
+        
+        String token = authHeader.substring(7);
+        if (!jwtUtil.validateToken(token)) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or expired token");
+        }
+
+        try {
+            String fileKey = s3Service.uploadFile(file);
+            return ResponseEntity.ok(fileKey);
+        } catch (Exception e) {
+            log.error("Failed to upload file", e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to upload file: " + e.getMessage());
+        }
+    }
+
 }
