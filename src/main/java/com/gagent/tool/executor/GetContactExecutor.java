@@ -23,10 +23,6 @@ public class GetContactExecutor implements GagentTool {
     public String execute(
             @P("Name or substring to match (e.g. 'Chen', 'Alice', 'Alice Wang').") String name_query
     ) {
-        System.out.println("====== EXECUTING GET CONTACT BY NAME TOOL ======");
-        System.out.println("Query: " + name_query);
-        System.out.println("=================================================");
-
         String result;
         String status = "success";
         try {

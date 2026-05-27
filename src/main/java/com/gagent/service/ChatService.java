@@ -21,6 +21,10 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ChatService {
 
+    static final String NEW_CHAT_GREETING =
+            "Hello! I'm Gagent, your AI-powered Google Workspace assistant. "
+                    + "Ask me to search Gmail, manage Drive files, look up contacts, or summarize your activity logs.";
+
     private final ChatSessionRepository chatSessionRepository;
     private final MessageRepository messageRepository;
 
@@ -42,6 +46,12 @@ public class ChatService {
                 .build();
         
         ChatSession saved = chatSessionRepository.save(session);
+        messageRepository.save(Message.builder()
+                .sessionId(saved.getId())
+                .userId(userId)
+                .role("assistant")
+                .content(NEW_CHAT_GREETING)
+                .build());
         log.info("Created new chat session {} for user {}", saved.getId(), userId);
         return toSessionDto(saved);
     }
