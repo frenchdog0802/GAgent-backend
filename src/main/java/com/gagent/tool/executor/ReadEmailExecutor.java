@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class ReadEmailExecutor implements GagentTool {
+public class ReadEmailExecutor extends LoggedGagentToolExecutor {
 
     private final UserRepository userRepository;
     private final GoogleWorkspaceService googleWorkspaceService;
@@ -27,28 +27,15 @@ public class ReadEmailExecutor implements GagentTool {
         System.out.println("Message ID: " + message_id);
         System.out.println("=======================================");
 
-        String result;
-        String status = "success";
-        try {
+        return executeWithActivityLog(activityLogger, "read_email", "Error reading email: ", () -> {
             String userIdStr = requestContext.getUserId();
             Integer userId = Integer.parseInt(userIdStr);
             User user = userRepository.findById(userId).orElse(null);
 
             if (user == null) {
-                result = "Error: User not found in database.";
-                status = "failed";
-            } else {
-                result = googleWorkspaceService.readEmail(user, message_id);
-                if (result.startsWith("Error")) {
-                    status = "failed";
-                }
+                return "Error: User not found in database.";
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-            result = "Error reading email: " + e.getMessage();
-            status = "failed";
-        }
-        activityLogger.logActivity("read_email", status, result);
-        return result;
+            return googleWorkspaceService.readEmail(user, message_id);
+        });
     }
 }

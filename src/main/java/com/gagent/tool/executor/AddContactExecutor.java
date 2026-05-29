@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class AddContactExecutor implements GagentTool {
+public class AddContactExecutor extends LoggedGagentToolExecutor {
 
     private final UserRepository userRepository;
     private final UserContactRepository userContactRepository;
@@ -32,37 +32,28 @@ public class AddContactExecutor implements GagentTool {
         System.out.println("Email: " + email_address);
         System.out.println("========================================");
 
-        String result;
-        String status = "success";
-        try {
+        return executeWithActivityLog(activityLogger, "add_contact", "Error adding contact: ", () -> {
             String userIdStr = requestContext.getUserId();
             Integer userId = Integer.parseInt(userIdStr);
             User user = userRepository.findById(userId).orElse(null);
 
             if (user == null) {
-                result = "Error: User not found in database.";
-                status = "failed";
-            } else if (userContactRepository.findByUserIdAndEmailAddress(userId, email_address).isPresent()) {
-                result = "Error: Contact with email " + email_address + " already exists.";
-                status = "failed";
-            } else {
-                UserContact contact = UserContact.builder()
-                        .user(user)
-                        .contactName(contact_name)
-                        .emailAddress(email_address)
-                        .company(company)
-                        .notes(notes)
-                        .build();
-
-                userContactRepository.save(contact);
-                result = "Contact '" + contact_name + "' (" + email_address + ") successfully added.";
+                return "Error: User not found in database.";
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-            result = "Error adding contact: " + e.getMessage();
-            status = "failed";
-        }
-        activityLogger.logActivity("add_contact", status, result);
-        return result;
+            if (userContactRepository.findByUserIdAndEmailAddress(userId, email_address).isPresent()) {
+                return "Error: Contact with email " + email_address + " already exists.";
+            }
+
+            UserContact contact = UserContact.builder()
+                    .user(user)
+                    .contactName(contact_name)
+                    .emailAddress(email_address)
+                    .company(company)
+                    .notes(notes)
+                    .build();
+
+            userContactRepository.save(contact);
+            return "Contact '" + contact_name + "' (" + email_address + ") successfully added.";
+        });
     }
 }

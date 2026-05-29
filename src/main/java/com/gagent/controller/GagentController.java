@@ -46,6 +46,11 @@ public class GagentController {
 
 
         log.info("Received run request from user {}: {}", userId, request.getMessage());
+        // #region agent log
+        try (var w = new java.io.FileWriter("d:/dev/gagent/debug-d2f7ed.log", true)) {
+            w.write("{\"sessionId\":\"d2f7ed\",\"hypothesisId\":\"C\",\"location\":\"GagentController.java:runAgent\",\"message\":\"/api/run received\",\"data\":{\"userId\":\"" + userId + "\",\"sessionId\":" + request.getSessionId() + ",\"msgLen\":" + (request.getMessage() != null ? request.getMessage().length() : 0) + "},\"timestamp\":" + System.currentTimeMillis() + "}\n");
+        } catch (Exception ignored) {}
+        // #endregion
         RunResponse response = gagentService.processRequest(request, userId);
         return ResponseEntity.ok(response);
     }

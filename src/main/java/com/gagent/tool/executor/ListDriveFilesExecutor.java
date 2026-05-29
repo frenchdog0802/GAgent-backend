@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class ListDriveFilesExecutor implements GagentTool {
+public class ListDriveFilesExecutor extends LoggedGagentToolExecutor {
 
     private final UserRepository userRepository;
     private final GoogleWorkspaceService googleWorkspaceService;
@@ -24,28 +24,15 @@ public class ListDriveFilesExecutor implements GagentTool {
             @P(value = "Google Drive search query (e.g. 'name contains \"report\"'). Optional.", required = false) String query,
             @P(value = "Max results to return (default 10).", required = false) Integer max_results
     ) {
-        String result;
-        String status = "success";
-        try {
+        return executeWithActivityLog(activityLogger, "list_drive_files", "Error listing drive files: ", () -> {
             String userIdStr = requestContext.getUserId();
             Integer userId = Integer.parseInt(userIdStr);
             User user = userRepository.findById(userId).orElse(null);
 
             if (user == null) {
-                result = "Error: User not found in database.";
-                status = "failed";
-            } else {
-                result = googleWorkspaceService.listDriveFiles(user, max_results, query);
-                if (result.startsWith("Error")) {
-                    status = "failed";
-                }
+                return "Error: User not found in database.";
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-            result = "Error listing drive files: " + e.getMessage();
-            status = "failed";
-        }
-        activityLogger.logActivity("list_drive_files", status, result);
-        return result;
+            return googleWorkspaceService.listDriveFiles(user, max_results, query);
+        });
     }
 }

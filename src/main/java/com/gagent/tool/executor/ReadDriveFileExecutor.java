@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class ReadDriveFileExecutor implements GagentTool {
+public class ReadDriveFileExecutor extends LoggedGagentToolExecutor {
 
     private final UserRepository userRepository;
     private final GoogleWorkspaceService googleWorkspaceService;
@@ -23,28 +23,15 @@ public class ReadDriveFileExecutor implements GagentTool {
     public String execute(
             @P("Exact Google Drive file ID.") String file_id
     ) {
-        String result;
-        String status = "success";
-        try {
+        return executeWithActivityLog(activityLogger, "read_drive_file", "Error reading drive file: ", () -> {
             String userIdStr = requestContext.getUserId();
             Integer userId = Integer.parseInt(userIdStr);
             User user = userRepository.findById(userId).orElse(null);
 
             if (user == null) {
-                result = "Error: User not found in database.";
-                status = "failed";
-            } else {
-                result = googleWorkspaceService.readDriveFile(user, file_id);
-                if (result.startsWith("Error")) {
-                    status = "failed";
-                }
+                return "Error: User not found in database.";
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-            result = "Error reading drive file: " + e.getMessage();
-            status = "failed";
-        }
-        activityLogger.logActivity("read_drive_file", status, result);
-        return result;
+            return googleWorkspaceService.readDriveFile(user, file_id);
+        });
     }
 }

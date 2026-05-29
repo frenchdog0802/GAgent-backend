@@ -38,6 +38,11 @@ public class GagentService {
         }
 
         Long sessionId = request.getSessionId();
+        // #region agent log
+        try (var w = new java.io.FileWriter("d:/dev/gagent/debug-d2f7ed.log", true)) {
+            w.write("{\"sessionId\":\"d2f7ed\",\"hypothesisId\":\"A\",\"location\":\"GagentService.java:processRequest\",\"message\":\"before saveUserMessage\",\"data\":{\"sessionId\":" + sessionId + ",\"msgLen\":" + promptMessage.length() + "},\"timestamp\":" + System.currentTimeMillis() + "}\n");
+        } catch (Exception ignored) {}
+        // #endregion
         saveUserMessage(promptMessage, userId, sessionId);
         if (sessionId != null) {
             chatService.updateSessionTitleFromFirstMessage(sessionId, promptMessage);
@@ -71,11 +76,16 @@ public class GagentService {
     }
 
     private void saveUserMessage(String content, String userId, Long sessionId) {
-        messageRepository.save(Message.builder()
+        Message saved = messageRepository.save(Message.builder()
                 .role("user")
                 .content(content)
                 .userId(userId)
                 .sessionId(sessionId)
                 .build());
+        // #region agent log
+        try (var w = new java.io.FileWriter("d:/dev/gagent/debug-d2f7ed.log", true)) {
+            w.write("{\"sessionId\":\"d2f7ed\",\"hypothesisId\":\"A\",\"location\":\"GagentService.java:saveUserMessage\",\"message\":\"user message saved\",\"data\":{\"savedId\":" + saved.getId() + ",\"sessionId\":" + sessionId + "},\"timestamp\":" + System.currentTimeMillis() + "}\n");
+        } catch (Exception ignored) {}
+        // #endregion
     }
 }

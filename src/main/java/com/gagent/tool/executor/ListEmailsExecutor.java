@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class ListEmailsExecutor implements GagentTool {
+public class ListEmailsExecutor extends LoggedGagentToolExecutor {
 
     private final UserRepository userRepository;
     private final GoogleWorkspaceService googleWorkspaceService;
@@ -29,28 +29,15 @@ public class ListEmailsExecutor implements GagentTool {
         System.out.println("Query: " + q);
         System.out.println("========================================");
 
-        String result;
-        String status = "success";
-        try {
+        return executeWithActivityLog(activityLogger, "list_emails", "Error listing emails: ", () -> {
             String userIdStr = requestContext.getUserId();
             Integer userId = Integer.parseInt(userIdStr);
             User user = userRepository.findById(userId).orElse(null);
 
             if (user == null) {
-                result = "Error: User not found in database.";
-                status = "failed";
-            } else {
-                result = googleWorkspaceService.listEmails(user, max_results, q);
-                if (result.startsWith("Error")) {
-                    status = "failed";
-                }
+                return "Error: User not found in database.";
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-            result = "Error listing emails: " + e.getMessage();
-            status = "failed";
-        }
-        activityLogger.logActivity("list_emails", status, result);
-        return result;
+            return googleWorkspaceService.listEmails(user, max_results, q);
+        });
     }
 }

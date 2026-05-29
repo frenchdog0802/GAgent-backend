@@ -13,7 +13,7 @@ import java.util.List;
 
 @Component
 @RequiredArgsConstructor
-public class GetContactExecutor implements GagentTool {
+public class GetContactExecutor extends LoggedGagentToolExecutor {
 
     private final UserContactRepository userContactRepository;
     private final RequestContext requestContext;
@@ -23,33 +23,25 @@ public class GetContactExecutor implements GagentTool {
     public String execute(
             @P("Name or substring to match (e.g. 'Chen', 'Alice', 'Alice Wang').") String name_query
     ) {
-        String result;
-        String status = "success";
-        try {
+        return executeWithActivityLog(activityLogger, "get_contact_by_name", "Error retrieving contact: ", () -> {
             String userIdStr = requestContext.getUserId();
             Integer userId = Integer.parseInt(userIdStr);
             List<UserContact> contacts = userContactRepository.findByUserIdAndContactNameContainingIgnoreCase(userId, name_query);
 
             if (contacts.isEmpty()) {
-                result = "No contacts found matching: " + name_query + ". Stop retrying and ask the user for the email address directly.";
-            } else {
-                StringBuilder sb = new StringBuilder("Found contacts:\n");
-                for (UserContact contact : contacts) {
-                    sb.append("- ").append(contact.getContactName()).append(" (").append(contact.getEmailAddress())
-                            .append(")");
-                    if (contact.getCompany() != null && !contact.getCompany().isEmpty()) {
-                        sb.append(" [").append(contact.getCompany()).append("]");
-                    }
-                    sb.append("\n");
-                }
-                result = sb.toString();
+                return "No contacts found matching: " + name_query + ". Stop retrying and ask the user for the email address directly.";
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-            result = "Error retrieving contact: " + e.getMessage();
-            status = "failed";
-        }
-        activityLogger.logActivity("get_contact_by_name", status, result);
-        return result;
+
+            StringBuilder sb = new StringBuilder("Found contacts:\n");
+            for (UserContact contact : contacts) {
+                sb.append("- ").append(contact.getContactName()).append(" (").append(contact.getEmailAddress())
+                        .append(")");
+                if (contact.getCompany() != null && !contact.getCompany().isEmpty()) {
+                    sb.append(" [").append(contact.getCompany()).append("]");
+                }
+                sb.append("\n");
+            }
+            return sb.toString();
+        });
     }
 }

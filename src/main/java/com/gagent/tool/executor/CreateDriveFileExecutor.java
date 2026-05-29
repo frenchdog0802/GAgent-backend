@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class CreateDriveFileExecutor implements GagentTool {
+public class CreateDriveFileExecutor extends LoggedGagentToolExecutor {
 
     private final UserRepository userRepository;
     private final GoogleWorkspaceService googleWorkspaceService;
@@ -24,28 +24,15 @@ public class CreateDriveFileExecutor implements GagentTool {
             @P("Name of the new file.") String name,
             @P("Text content to write to the file.") String content
     ) {
-        String result;
-        String status = "success";
-        try {
+        return executeWithActivityLog(activityLogger, "create_drive_file", "Error creating drive file: ", () -> {
             String userIdStr = requestContext.getUserId();
             Integer userId = Integer.parseInt(userIdStr);
             User user = userRepository.findById(userId).orElse(null);
 
             if (user == null) {
-                result = "Error: User not found in database.";
-                status = "failed";
-            } else {
-                result = googleWorkspaceService.createDriveFile(user, name, content);
-                if (result.startsWith("Error")) {
-                    status = "failed";
-                }
+                return "Error: User not found in database.";
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-            result = "Error creating drive file: " + e.getMessage();
-            status = "failed";
-        }
-        activityLogger.logActivity("create_drive_file", status, result);
-        return result;
+            return googleWorkspaceService.createDriveFile(user, name, content);
+        });
     }
 }

@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 @Slf4j
-public class UploadDriveFileExecutor implements GagentTool {
+public class UploadDriveFileExecutor extends LoggedGagentToolExecutor {
 
     private final UserRepository userRepository;
     private final GoogleWorkspaceService googleWorkspaceService;
@@ -33,35 +33,23 @@ public class UploadDriveFileExecutor implements GagentTool {
         log.info("File Name: {}", file_name);
         log.info("==============================================================");
 
-        String result;
-        String status = "success";
-        try {
+        return executeWithActivityLog(activityLogger, "upload_drive_file_from_attachment",
+                "Error uploading file to Drive: ", () -> {
             String userIdStr = requestContext.getUserId();
             Integer userId = Integer.parseInt(userIdStr);
             User user = userRepository.findById(userId).orElse(null);
 
             if (user == null) {
-                result = "Error: User not found in database.";
-                status = "failed";
-            } else if (s3_file_key == null || s3_file_key.isEmpty()) {
-                result = "Error: s3_file_key is missing.";
-                status = "failed";
-            } else if (file_name == null || file_name.isEmpty()) {
-                result = "Error: file_name is missing.";
-                status = "failed";
-            } else {
-                byte[] fileData = s3Service.readFile(s3_file_key);
-                result = googleWorkspaceService.uploadFileToDrive(user, file_name, fileData);
-                if (result.startsWith("Error")) {
-                    status = "failed";
-                }
+                return "Error: User not found in database.";
             }
-        } catch (Exception e) {
-            log.error("Error uploading file to Drive", e);
-            result = "Error uploading file to Drive: " + e.getMessage();
-            status = "failed";
-        }
-        activityLogger.logActivity("upload_drive_file_from_attachment", status, result);
-        return result;
+            if (s3_file_key == null || s3_file_key.isEmpty()) {
+                return "Error: s3_file_key is missing.";
+            }
+            if (file_name == null || file_name.isEmpty()) {
+                return "Error: file_name is missing.";
+            }
+            byte[] fileData = s3Service.readFile(s3_file_key);
+            return googleWorkspaceService.uploadFileToDrive(user, file_name, fileData);
+        });
     }
 }

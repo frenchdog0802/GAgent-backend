@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class SendEmailExecutor implements GagentTool {
+public class SendEmailExecutor extends LoggedGagentToolExecutor {
 
     private final UserRepository userRepository;
     private final GoogleWorkspaceService googleWorkspaceService;
@@ -35,30 +35,20 @@ public class SendEmailExecutor implements GagentTool {
             return skippedMsg;
         }
 
-        String result;
-        String status = "success";
-        try {
+        return executeWithActivityLog(activityLogger, "send_email", "Error sending email: ", () -> {
             String userIdStr = requestContext.getUserId();
             Integer userId = Integer.parseInt(userIdStr);
             User user = userRepository.findById(userId).orElse(null);
 
             if (user == null) {
-                result = "Error: User not found in database.";
-                status = "failed";
-            } else {
-                result = googleWorkspaceService.sendEmail(user, to_email, subject, body);
-                if (result.startsWith("Error")) {
-                    status = "failed";
-                } else {
-                    requestContext.setEmailSent(true);
-                }
+                return "Error: User not found in database.";
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-            result = "Error sending email: " + e.getMessage();
-            status = "failed";
-        }
-        activityLogger.logActivity("send_email", status, result);
-        return result;
+
+            String result = googleWorkspaceService.sendEmail(user, to_email, subject, body);
+            if (!result.startsWith("Error")) {
+                requestContext.setEmailSent(true);
+            }
+            return result;
+        });
     }
 }

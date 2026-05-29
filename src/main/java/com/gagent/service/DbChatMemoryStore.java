@@ -43,6 +43,12 @@ public class DbChatMemoryStore implements ChatMemoryStore {
                 chatMessages.add(new SystemMessage(msg.getContent()));
             }
         }
+        // #region agent log
+        try (var w = new java.io.FileWriter("d:/dev/gagent/debug-d2f7ed.log", true)) {
+            long userCount = chatMessages.stream().filter(m -> m instanceof UserMessage).count();
+            w.write("{\"sessionId\":\"d2f7ed\",\"hypothesisId\":\"B\",\"location\":\"DbChatMemoryStore.java:getMessages\",\"message\":\"loaded messages\",\"data\":{\"memoryId\":\"" + memoryId + "\",\"total\":" + chatMessages.size() + ",\"userCount\":" + userCount + ",\"ephemeral\":" + (requestContext.getEphemeralChatMessages() != null) + "},\"timestamp\":" + System.currentTimeMillis() + "}\n");
+        } catch (Exception ignored) {}
+        // #endregion
         return chatMessages;
     }
 
@@ -62,13 +68,22 @@ public class DbChatMemoryStore implements ChatMemoryStore {
         }
 
         int existingCount = existing.size();
+        // #region agent log
+        try (var w = new java.io.FileWriter("d:/dev/gagent/debug-d2f7ed.log", true)) {
+            long persistUserCount = persistable.stream().filter(m -> m instanceof UserMessage).count();
+            w.write("{\"sessionId\":\"d2f7ed\",\"hypothesisId\":\"A,E\",\"location\":\"DbChatMemoryStore.java:updateMessages\",\"message\":\"updateMessages called\",\"data\":{\"memoryId\":\"" + memoryId + "\",\"existingCount\":" + existingCount + ",\"persistableCount\":" + persistable.size() + ",\"persistUserCount\":" + persistUserCount + ",\"willSaveNew\":" + (persistable.size() > existingCount) + ",\"newCount\":" + Math.max(0, persistable.size() - existingCount) + "},\"timestamp\":" + System.currentTimeMillis() + "}\n");
+        } catch (Exception ignored) {}
+        // #endregion
         if (persistable.size() > existingCount) {
             for (int i = existingCount; i < persistable.size(); i++) {
                 ChatMessage chatMsg = persistable.get(i);
                 Message.MessageBuilder builder = Message.builder();
+                String role;
                 if (chatMsg instanceof UserMessage) {
+                    role = "user";
                     builder.role("user").content(((UserMessage) chatMsg).singleText());
                 } else {
+                    role = "assistant";
                     builder.role("assistant").content(((AiMessage) chatMsg).text());
                 }
 
@@ -78,7 +93,12 @@ public class DbChatMemoryStore implements ChatMemoryStore {
                 } else {
                     builder.userId((String) memoryId);
                 }
-                messageRepository.save(builder.build());
+                Message saved = messageRepository.save(builder.build());
+                // #region agent log
+                try (var w = new java.io.FileWriter("d:/dev/gagent/debug-d2f7ed.log", true)) {
+                    w.write("{\"sessionId\":\"d2f7ed\",\"hypothesisId\":\"A,E\",\"location\":\"DbChatMemoryStore.java:updateMessages\",\"message\":\"saved new message\",\"data\":{\"savedId\":" + saved.getId() + ",\"role\":\"" + role + "\",\"index\":" + i + "},\"timestamp\":" + System.currentTimeMillis() + "}\n");
+                } catch (Exception ignored) {}
+                // #endregion
             }
         }
     }

@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class SendEmailWithAttachmentExecutor implements GagentTool {
+public class SendEmailWithAttachmentExecutor extends LoggedGagentToolExecutor {
 
     private final UserRepository userRepository;
     private final GoogleWorkspaceService googleWorkspaceService;
@@ -38,36 +38,26 @@ public class SendEmailWithAttachmentExecutor implements GagentTool {
             return skippedMsg;
         }
 
-        String result;
-        String status = "success";
-        try {
+        return executeWithActivityLog(activityLogger, "send_email_with_attachment",
+                "Error sending email with attachment: ", () -> {
             String userIdStr = requestContext.getUserId();
             Integer userId = Integer.parseInt(userIdStr);
             User user = userRepository.findById(userId).orElse(null);
 
             if (user == null) {
-                result = "Error: User not found in database.";
-                status = "failed";
-            } else {
-                // Fetch file from S3
-                byte[] fileData = s3Service.readFile(s3_file_key);
-
-                // Extract original filename from key if possible (format: UUID_filename)
-                String filename = s3_file_key.contains("_") ? s3_file_key.substring(s3_file_key.indexOf("_") + 1) : "attachment";
-
-                result = googleWorkspaceService.sendEmailWithAttachment(user, to_email, subject, body, filename, fileData);
-                if (result.startsWith("Error")) {
-                    status = "failed";
-                } else {
-                    requestContext.setEmailSent(true);
-                }
+                return "Error: User not found in database.";
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-            result = "Error sending email with attachment: " + e.getMessage();
-            status = "failed";
-        }
-        activityLogger.logActivity("send_email_with_attachment", status, result);
-        return result;
+
+            byte[] fileData = s3Service.readFile(s3_file_key);
+            String filename = s3_file_key.contains("_")
+                    ? s3_file_key.substring(s3_file_key.indexOf("_") + 1)
+                    : "attachment";
+
+            String result = googleWorkspaceService.sendEmailWithAttachment(user, to_email, subject, body, filename, fileData);
+            if (!result.startsWith("Error")) {
+                requestContext.setEmailSent(true);
+            }
+            return result;
+        });
     }
 }
