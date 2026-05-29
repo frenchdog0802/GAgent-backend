@@ -3,8 +3,6 @@ package com.gagent.service;
 import com.gagent.config.RequestContext;
 import com.gagent.dto.RunRequest;
 import com.gagent.dto.RunResponse;
-import com.gagent.entity.Message;
-import com.gagent.repository.MessageRepository;
 import com.gagent.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,7 +16,6 @@ import java.time.LocalDate;
 @RequiredArgsConstructor
 public class GagentService {
 
-    private final MessageRepository messageRepository;
     private final UserRepository userRepository;
     private final ChatService chatService;
     private final WorkspaceAgent workspaceAgent;
@@ -40,10 +37,9 @@ public class GagentService {
         Long sessionId = request.getSessionId();
         // #region agent log
         try (var w = new java.io.FileWriter("d:/dev/gagent/debug-d2f7ed.log", true)) {
-            w.write("{\"sessionId\":\"d2f7ed\",\"hypothesisId\":\"A\",\"location\":\"GagentService.java:processRequest\",\"message\":\"before saveUserMessage\",\"data\":{\"sessionId\":" + sessionId + ",\"msgLen\":" + promptMessage.length() + "},\"timestamp\":" + System.currentTimeMillis() + "}\n");
+            w.write("{\"sessionId\":\"d2f7ed\",\"hypothesisId\":\"A\",\"location\":\"GagentService.java:processRequest\",\"message\":\"processing request (no pre-save)\",\"data\":{\"sessionId\":" + sessionId + ",\"msgLen\":" + promptMessage.length() + "},\"timestamp\":" + System.currentTimeMillis() + "}\n");
         } catch (Exception ignored) {}
         // #endregion
-        saveUserMessage(promptMessage, userId, sessionId);
         if (sessionId != null) {
             chatService.updateSessionTitleFromFirstMessage(sessionId, promptMessage);
         }
@@ -73,19 +69,5 @@ public class GagentService {
             log.error("Error processing request", e);
             return new RunResponse("Error: " + e.getMessage(), "error", Instant.now());
         }
-    }
-
-    private void saveUserMessage(String content, String userId, Long sessionId) {
-        Message saved = messageRepository.save(Message.builder()
-                .role("user")
-                .content(content)
-                .userId(userId)
-                .sessionId(sessionId)
-                .build());
-        // #region agent log
-        try (var w = new java.io.FileWriter("d:/dev/gagent/debug-d2f7ed.log", true)) {
-            w.write("{\"sessionId\":\"d2f7ed\",\"hypothesisId\":\"A\",\"location\":\"GagentService.java:saveUserMessage\",\"message\":\"user message saved\",\"data\":{\"savedId\":" + saved.getId() + ",\"sessionId\":" + sessionId + "},\"timestamp\":" + System.currentTimeMillis() + "}\n");
-        } catch (Exception ignored) {}
-        // #endregion
     }
 }
