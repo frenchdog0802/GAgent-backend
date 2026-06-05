@@ -37,6 +37,9 @@ public class User {
     @Column(name = "google_refresh_token", length = 2048)
     private String googleRefreshToken;
 
+    @Column(name = "webhook_secret", length = 255)
+    private String webhookSecret;
+
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
 

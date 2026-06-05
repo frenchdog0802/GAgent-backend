@@ -37,6 +37,8 @@ spring:
 app:
   jwt-secret: ${JWT_SECRET}
   frontend-url: ${FRONTEND_URL:http://localhost:5173}
+  webhook:
+    hmac-algorithm: HmacSHA256
 
 aws:
   s3:

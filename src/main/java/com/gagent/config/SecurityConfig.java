@@ -26,7 +26,7 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(authz -> authz
-                .requestMatchers("/api/auth/**", "/oauth2/**", "/login/**").permitAll()
+                .requestMatchers("/api/auth/**", "/oauth2/**", "/login/**", "/api/webhooks/*/github", "/api/webhooks/*/jenkins").permitAll()
                 .anyRequest().permitAll()
                 )
                 .oauth2Login(oauth2 -> oauth2
