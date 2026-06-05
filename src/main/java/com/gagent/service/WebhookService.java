@@ -95,7 +95,7 @@ public class WebhookService {
             JsonNode root = objectMapper.readTree(payload);
             
             // We only care about workflow_run completed
-            if (!root.has("workflow_run")) {
+            if (!root.has("workflow_run") || !root.has("action") || !root.get("action").asText().equals("completed")) {
                 return null;
             }
 
