@@ -21,13 +21,14 @@ COPY src src
 # Build the application
 RUN ./gradlew bootJar --no-daemon -x test
 
-# Stage 2: Runtime (Debian-based for git + gh support)
-FROM eclipse-temurin:17-jre
+# Stage 2: Runtime (Debian-based for git + gh + CI sandbox tooling)
+FROM eclipse-temurin:17-jdk
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git \
       gh \
       bash \
+      maven \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
