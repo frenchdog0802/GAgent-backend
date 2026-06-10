@@ -8,11 +8,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 @Service
 @Slf4j
 public class GitHubLogFetcher {
+
+    private static final int JOB_LOG_BUDGET = 20_000;
+    private static final int TOTAL_LOG_BUDGET = 40_000;
 
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -47,7 +52,13 @@ public class GitHubLogFetcher {
                         + "Reconnect GitHub in GAgent settings.\n\n");
             }
 
-            for (JsonNode job : jobs) {
+            List<JsonNode> orderedJobs = new ArrayList<>();
+            jobs.forEach(orderedJobs::add);
+            orderedJobs.sort(Comparator
+                    .comparing((JsonNode job) -> !"failure".equals(job.path("conclusion").asText()))
+                    .thenComparing(job -> job.path("name").asText("unknown")));
+
+            for (JsonNode job : orderedJobs) {
                 String jobName = job.has("name") ? job.get("name").asText() : "unknown";
                 String conclusion = job.has("conclusion") ? job.get("conclusion").asText() : "unknown";
                 logBuilder.append("=== Job: ").append(jobName).append(" (").append(conclusion).append(") ===\n");
@@ -68,8 +79,7 @@ public class GitHubLogFetcher {
                 }
             }
 
-            String result = logBuilder.toString();
-            return truncate(result, 32_000);
+            return CiLogCompactor.compactForDiagnosis(logBuilder.toString(), TOTAL_LOG_BUDGET);
         } catch (Exception e) {
             log.error("Error fetching GitHub failure log for run {}", runId, e);
             return "Error fetching GitHub logs: " + e.getMessage();
@@ -120,21 +130,18 @@ public class GitHubLogFetcher {
         try {
             String logUrl = "https://api.github.com/repos/" + owner + "/" + repo
                     + "/actions/jobs/" + jobId + "/logs";
-            ResponseEntity<String> response = restTemplate.exchange(
-                    logUrl, HttpMethod.GET, authedRequest(githubAccessToken), String.class);
+            ResponseEntity<byte[]> response = restTemplate.exchange(
+                    logUrl, HttpMethod.GET, authedRequest(githubAccessToken), byte[].class);
 
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return truncate(response.getBody(), 16_000);
+            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+                return "(log unavailable for job " + jobId + ")";
             }
-            return "(log unavailable for job " + jobId + ")";
+
+            byte[] body = response.getBody();
+            String rawLog = CiLogCompactor.extractLogText(body);
+            return CiLogCompactor.compactForDiagnosis(rawLog, JOB_LOG_BUDGET);
         } catch (Exception e) {
             return "(log fetch failed for job " + jobId + ": " + e.getMessage() + ")";
         }
-    }
-
-    private String truncate(String value, int max) {
-        if (value == null) return "";
-        if (value.length() <= max) return value;
-        return value.substring(0, max) + "...";
     }
 }

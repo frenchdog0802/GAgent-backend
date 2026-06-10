@@ -17,7 +17,7 @@ public class TestCommandDetector {
 
         if (hasMakefile) return "make test";
         if (hasPackageJson) return "npm test";
-        if (hasPomXml) return "mvn test";
+        if (hasPomXml) return "mvn -B test";
         if (hasBuildGradle) return "./gradlew test";
         if (hasRequirements) return "pytest";
         if (hasGoMod) return "go test ./...";
