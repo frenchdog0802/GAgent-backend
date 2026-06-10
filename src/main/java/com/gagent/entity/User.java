@@ -37,6 +37,12 @@ public class User {
     @Column(name = "google_refresh_token", length = 2048)
     private String googleRefreshToken;
 
+    @Column(name = "github_access_token", length = 2048)
+    private String githubAccessToken;
+
+    @Column(name = "github_login")
+    private String githubLogin;
+
     @Column(name = "webhook_secret", length = 255)
     private String webhookSecret;
 

@@ -39,6 +39,11 @@ app:
   frontend-url: ${FRONTEND_URL:http://localhost:5173}
   webhook:
     hmac-algorithm: HmacSHA256
+  ci:
+    sandbox-root: ${CI_SANDBOX_ROOT:/tmp/ci-sandbox}
+  github:
+    client-id: ${GITHUB_CLIENT_ID:}
+    client-secret: ${GITHUB_CLIENT_SECRET:}
 
 aws:
   s3:

@@ -49,12 +49,11 @@ public class OAuth2LoginSuccessHandler extends SimpleUrlAuthenticationSuccessHan
             user.setGoogleId(googleId);
         }
 
-        if (authentication instanceof OAuth2AuthenticationToken) {
-            OAuth2AuthenticationToken oauthToken = (OAuth2AuthenticationToken) authentication;
+        if (authentication instanceof OAuth2AuthenticationToken oauthToken) {
             OAuth2AuthorizedClient client = authorizedClientService.loadAuthorizedClient(
                     oauthToken.getAuthorizedClientRegistrationId(),
                     oauthToken.getName());
-            
+
             if (client != null && client.getAccessToken() != null) {
                 user.setGoogleAccessToken(client.getAccessToken().getTokenValue());
                 if (client.getRefreshToken() != null) {
@@ -62,12 +61,10 @@ public class OAuth2LoginSuccessHandler extends SimpleUrlAuthenticationSuccessHan
                 }
             }
         }
-        
+
         userRepository.save(user);
 
         String token = jwtUtil.generateToken(user.getId());
-
-        // Redirect to frontend with token
         String redirectUrl = frontendUrl + "?token=" + token;
         getRedirectStrategy().sendRedirect(request, response, redirectUrl);
     }

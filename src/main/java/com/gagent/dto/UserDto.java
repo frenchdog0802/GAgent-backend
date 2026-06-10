@@ -19,4 +19,9 @@ public class UserDto {
 
     @JsonProperty("isGoogleLogin")
     private boolean isGoogleLogin;
+
+    @JsonProperty("isGithubConnected")
+    private boolean isGithubConnected;
+
+    private String githubLogin;
 }

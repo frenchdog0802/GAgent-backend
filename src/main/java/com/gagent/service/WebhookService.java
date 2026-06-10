@@ -2,8 +2,11 @@ package com.gagent.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.gagent.entity.CiWorkflow;
+import com.gagent.entity.CiWorkflowStatus;
 import com.gagent.entity.User;
 import com.gagent.entity.WebhookEvent;
+import com.gagent.repository.CiWorkflowRepository;
 import com.gagent.repository.UserRepository;
 import com.gagent.repository.WebhookEventRepository;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +28,8 @@ public class WebhookService {
 
     private final WebhookEventRepository webhookEventRepository;
     private final UserRepository userRepository;
+    private final CiWorkflowRepository ciWorkflowRepository;
+    private final CiRemediationService ciRemediationService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${app.webhook.hmac-algorithm:HmacSHA256}")
@@ -60,8 +65,7 @@ public class WebhookService {
             SecretKeySpec secretKey = new SecretKeySpec(secret.getBytes(), hmacAlgorithm);
             mac.init(secretKey);
             byte[] hash = mac.doFinal(payload.getBytes());
-            
-            // Format expected signature for GitHub (e.g. "sha256=...")
+
             StringBuilder hexString = new StringBuilder();
             for (byte b : hash) {
                 String hex = Integer.toHexString(0xff & b);
@@ -69,12 +73,10 @@ public class WebhookService {
                 hexString.append(hex);
             }
             String expectedSignature = "sha256=" + hexString.toString();
-            
-            // Check Jenkins vs Github formatting. If signature doesn't start with sha256=, it might be Jenkins raw hex or base64 token
-            // Since we implemented custom header for jenkins or use GitHub's standard, we handle both loosely here.
+
             if (signature.equals(expectedSignature)) return true;
             if (signature.equals(hexString.toString())) return true;
-            if (signature.equals(secret)) return true; // fallback for simple token verification (like Jenkins sometimes uses)
+            if (signature.equals(secret)) return true;
 
             return false;
         } catch (Exception e) {
@@ -93,32 +95,38 @@ public class WebhookService {
 
         try {
             JsonNode root = objectMapper.readTree(payload);
-            
-            // We only care about workflow_run completed
+
             if (!root.has("workflow_run") || !root.has("action") || !root.get("action").asText().equals("completed")) {
                 return null;
             }
 
             JsonNode workflowRun = root.get("workflow_run");
-            String status = workflowRun.has("conclusion") ? workflowRun.get("conclusion").asText() : "unknown";
-            
-            // Only process failures or errors if we want to filter, but let's record everything that gets here.
-            
+            String conclusion = workflowRun.has("conclusion") ? workflowRun.get("conclusion").asText() : "unknown";
+            String repository = root.has("repository") ? root.get("repository").get("full_name").asText() : "unknown";
+            String fullSha = workflowRun.has("head_sha") ? workflowRun.get("head_sha").asText() : null;
+            Long runId = workflowRun.has("id") ? workflowRun.get("id").asLong() : null;
+
             WebhookEvent event = WebhookEvent.builder()
                     .userId(userId)
                     .source("github_actions")
-                    .repository(root.has("repository") ? root.get("repository").get("full_name").asText() : "unknown")
+                    .repository(repository)
                     .branch(workflowRun.has("head_branch") ? workflowRun.get("head_branch").asText() : null)
                     .workflowName(workflowRun.has("name") ? workflowRun.get("name").asText() : "unknown")
-                    .status(status)
-                    .commitSha(workflowRun.has("head_sha") ? workflowRun.get("head_sha").asText().substring(0, Math.min(7, workflowRun.get("head_sha").asText().length())) : null)
-                    .commitMessage(workflowRun.has("head_commit") && workflowRun.get("head_commit").has("message") ? 
+                    .status(conclusion)
+                    .commitSha(fullSha != null ? fullSha.substring(0, Math.min(7, fullSha.length())) : null)
+                    .commitMessage(workflowRun.has("head_commit") && workflowRun.get("head_commit").has("message") ?
                             workflowRun.get("head_commit").get("message").asText().split("\n")[0] : null)
                     .runUrl(workflowRun.has("html_url") ? workflowRun.get("html_url").asText() : null)
                     .rawPayload(payload)
                     .build();
 
             WebhookEvent saved = webhookEventRepository.save(event);
+
+            if ("failure".equals(conclusion) || "timed_out".equals(conclusion)) {
+                String branch = workflowRun.has("head_branch") ? workflowRun.get("head_branch").asText() : null;
+                triggerRemediation(user, saved, repository, fullSha, runId, branch);
+            }
+
             return saved.getId();
         } catch (Exception e) {
             log.error("Failed to parse GitHub webhook", e);
@@ -126,18 +134,49 @@ public class WebhookService {
         }
     }
 
+    private void triggerRemediation(User user, WebhookEvent event, String repository, String fullSha,
+            Long runId, String branch) {
+        if (user.getGithubAccessToken() == null || user.getGithubAccessToken().isBlank()) {
+            log.warn("Skipping remediation for event {} — user {} has no GitHub token", event.getId(), user.getId());
+            return;
+        }
+
+        if (ciWorkflowRepository.findByWebhookEventId(event.getId()).isPresent()) {
+            log.info("Remediation already exists for webhook event {}", event.getId());
+            return;
+        }
+
+        String cloneUrl = "https://github.com/" + repository + ".git";
+
+        CiWorkflow workflow = CiWorkflow.builder()
+                .userId(user.getId())
+                .webhookEventId(event.getId())
+                .repository(repository)
+                .branch(branch)
+                .cloneUrl(cloneUrl)
+                .failingSha(fullSha != null ? fullSha : "HEAD")
+                .failingShaFull(fullSha)
+                .githubRunId(runId)
+                .status(CiWorkflowStatus.PENDING)
+                .testCommand("make test")
+                .build();
+
+        CiWorkflow saved = ciWorkflowRepository.save(workflow);
+        log.info("Created CiWorkflow {} for failed run on {}", saved.getId(), repository);
+        ciRemediationService.startAsync(saved.getId(), user.getGithubAccessToken());
+    }
+
     public Long processJenkinsWebhook(String userId, String payload, String token) {
         User user = userRepository.findById(Integer.parseInt(userId))
                 .orElseThrow(() -> new IllegalArgumentException("User not found"));
 
-        // For Jenkins, we can use a simpler token match if configured that way, or HMAC.
         if (user.getWebhookSecret() == null || !user.getWebhookSecret().equals(token)) {
             throw new SecurityException("Invalid webhook token");
         }
 
         try {
             JsonNode root = objectMapper.readTree(payload);
-            
+
             WebhookEvent event = WebhookEvent.builder()
                     .userId(userId)
                     .source("jenkins")

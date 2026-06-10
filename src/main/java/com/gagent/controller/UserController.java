@@ -50,6 +50,8 @@ public class UserController {
                 .userName(user.getUserName())
                 .isGoogleConnected(user.getGoogleAccessToken() != null)
                 .isGoogleLogin(user.getGoogleId() != null)
+                .isGithubConnected(user.getGithubAccessToken() != null)
+                .githubLogin(user.getGithubLogin())
                 .build();
     }
 }

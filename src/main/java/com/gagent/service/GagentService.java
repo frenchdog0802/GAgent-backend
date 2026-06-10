@@ -35,11 +35,6 @@ public class GagentService {
         }
 
         Long sessionId = request.getSessionId();
-        // #region agent log
-        try (var w = new java.io.FileWriter("d:/dev/gagent/debug-d2f7ed.log", true)) {
-            w.write("{\"sessionId\":\"d2f7ed\",\"hypothesisId\":\"A\",\"location\":\"GagentService.java:processRequest\",\"message\":\"processing request (no pre-save)\",\"data\":{\"sessionId\":" + sessionId + ",\"msgLen\":" + promptMessage.length() + "},\"timestamp\":" + System.currentTimeMillis() + "}\n");
-        } catch (Exception ignored) {}
-        // #endregion
         if (sessionId != null) {
             chatService.updateSessionTitleFromFirstMessage(sessionId, promptMessage);
         }

@@ -8,9 +8,6 @@ import dev.langchain4j.agent.tool.Tool;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -44,13 +41,6 @@ public class SummarizeActivityLogsExecutor implements GagentTool {
             @P(value = "End date in YYYY-MM-DD; required when date_range is custom.", required = false) String end_date,
             @P(value = "Include failed actions; defaults to true.", required = false) Boolean include_failed
     ) {
-        // #region agent log
-        debugLog("H-A,H-B,H-D", "SummarizeActivityLogsExecutor.execute:entry", Map.of(
-                "date_range", String.valueOf(date_range),
-                "start_date", String.valueOf(start_date),
-                "end_date", String.valueOf(end_date),
-                "include_failed", String.valueOf(include_failed)));
-        // #endregion
         String userId = requestContext.getUserId();
         if (userId == null || userId.isBlank()) {
             return "Error: User context not available.";
@@ -60,23 +50,8 @@ public class SummarizeActivityLogsExecutor implements GagentTool {
 
         try {
             DateRange range = resolveDateRange(date_range, start_date, end_date);
-            // #region agent log
-            debugLog("H-B,H-E", "SummarizeActivityLogsExecutor.execute:resolvedRange", Map.of(
-                    "label", range.label(),
-                    "start", range.start().toString(),
-                    "end", range.end().toString(),
-                    "today", LocalDate.now(ZONE).toString(),
-                    "zone", ZONE.toString()));
-            // #endregion
             List<ActivityLog> logs = activityLogRepository.findByUserIdAndTimestampRange(
                     userId, range.start(), range.end());
-            // #region agent log
-            debugLog("H-B,H-E", "SummarizeActivityLogsExecutor.execute:queryResult", Map.of(
-                    "userId", userId,
-                    "logCount", String.valueOf(logs.size()),
-                    "firstTimestamp", logs.isEmpty() ? "none" : logs.get(0).getTimestamp().toString(),
-                    "lastTimestamp", logs.isEmpty() ? "none" : logs.get(logs.size() - 1).getTimestamp().toString()));
-            // #endregion
 
             if (!includeFailed) {
                 logs = logs.stream()
@@ -85,25 +60,11 @@ public class SummarizeActivityLogsExecutor implements GagentTool {
             }
 
             if (logs.isEmpty()) {
-                String empty = "No recorded activity logs found for " + range.label() + ".";
-                // #region agent log
-                debugLog("H-C,H-D", "SummarizeActivityLogsExecutor.execute:empty", Map.of("result", empty));
-                // #endregion
-                return empty;
+                return "No recorded activity logs found for " + range.label() + ".";
             }
 
-            String summary = buildSummary(range.label(), logs, includeFailed);
-            // #region agent log
-            debugLog("H-A,H-E", "SummarizeActivityLogsExecutor.execute:success", Map.of(
-                    "resultPreview", summary.length() > 120 ? summary.substring(0, 120) : summary));
-            // #endregion
-            return summary;
+            return buildSummary(range.label(), logs, includeFailed);
         } catch (IllegalArgumentException e) {
-            // #region agent log
-            debugLog("H-A,H-C,H-D", "SummarizeActivityLogsExecutor.execute:badDateRange", Map.of(
-                    "error", e.getMessage(),
-                    "date_range", String.valueOf(date_range)));
-            // #endregion
             return "Error: " + e.getMessage();
         } catch (Exception e) {
             e.printStackTrace();
@@ -243,24 +204,4 @@ public class SummarizeActivityLogsExecutor implements GagentTool {
     }
 
     record DateRange(String label, Instant start, Instant end) {}
-
-    // #region agent log
-    private static void debugLog(String hypothesisId, String location, Map<String, String> data) {
-        try {
-            StringBuilder dataJson = new StringBuilder("{");
-            data.forEach((k, v) -> dataJson.append("\"").append(k.replace("\"", "\\\"")).append("\":\"")
-                    .append(String.valueOf(v).replace("\"", "\\\"")).append("\","));
-            if (!data.isEmpty()) {
-                dataJson.setLength(dataJson.length() - 1);
-            }
-            dataJson.append("}");
-            String line = "{\"sessionId\":\"32c2a9\",\"timestamp\":" + System.currentTimeMillis()
-                    + ",\"hypothesisId\":\"" + hypothesisId + "\",\"location\":\"" + location
-                    + "\",\"message\":\"debug\",\"data\":" + dataJson + "}" + System.lineSeparator();
-            Path logPath = Path.of("d:/dev/gagent/debug-32c2a9.log");
-            Files.writeString(logPath, line, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        } catch (Exception ignored) {
-        }
-    }
-    // #endregion
 }
