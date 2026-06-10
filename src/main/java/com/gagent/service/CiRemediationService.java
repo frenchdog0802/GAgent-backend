@@ -119,11 +119,13 @@ public class CiRemediationService {
             workflow.setFixAttempt(attempt);
             ciWorkflowRepository.save(workflow);
 
-            try {
-                sandboxCiExecutor.resetWorkingTree(repoPath);
-            } catch (Exception e) {
-                ctx.setLastApplyError("reset failed: " + e.getMessage());
-                continue;
+            if (attempt == 1) {
+                try {
+                    sandboxCiExecutor.resetWorkingTree(repoPath);
+                } catch (Exception e) {
+                    ctx.setLastApplyError("reset failed: " + e.getMessage());
+                    continue;
+                }
             }
 
             if (attempt > 1 && ctx.getLastTestOutput() != null) {

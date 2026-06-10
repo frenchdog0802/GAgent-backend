@@ -25,8 +25,10 @@ public class CiPatchGeneratorService {
                 SystemMessage.from("""
                     You fix CI failures. Reply with JSON only, no markdown.
                     Format: {"edits":[{"path":"...","old_string":"...","new_string":"..."}]}
-                    old_string must match the file exactly once.
+                    old_string must match the file exactly once, including whitespace.
                     Only edit paths in the allowed list. Minimal change only.
+                    The repo may contain multiple independent bugs; fix ALL issues needed for tests to pass.
+                    On retry attempts, build on the current file contents shown below (partial fixes may remain).
                     """),
                 UserMessage.from(userPrompt)
         ).aiMessage().text();
