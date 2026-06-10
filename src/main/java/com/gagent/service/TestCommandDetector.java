@@ -21,6 +21,6 @@ public class TestCommandDetector {
         if (hasBuildGradle) return "./gradlew test";
         if (hasRequirements) return "pytest";
         if (hasGoMod) return "go test ./...";
-        return "make test";
+        return "echo 'No supported test runner detected in repo'";
     }
 }

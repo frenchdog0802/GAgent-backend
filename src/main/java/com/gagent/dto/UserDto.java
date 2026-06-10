@@ -23,5 +23,11 @@ public class UserDto {
     @JsonProperty("isGithubConnected")
     private boolean isGithubConnected;
 
+    @JsonProperty("isGoogleExpired")
+    private boolean isGoogleExpired;
+
+    @JsonProperty("isGithubExpired")
+    private boolean isGithubExpired;
+
     private String githubLogin;
 }

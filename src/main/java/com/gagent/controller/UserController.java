@@ -4,7 +4,7 @@ import com.gagent.config.JwtUtil;
 import com.gagent.dto.UserDto;
 import com.gagent.entity.User;
 import com.gagent.repository.UserRepository;
-import com.gagent.service.AuthService;
+import com.gagent.service.OAuthTokenService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -21,6 +21,7 @@ public class UserController {
 
     private final UserRepository userRepository;
     private final JwtUtil jwtUtil;
+    private final OAuthTokenService oauthTokenService;
 
     @GetMapping("/me")
     public ResponseEntity<UserDto> getMe(HttpServletRequest request) {
@@ -44,13 +45,21 @@ public class UserController {
     }
 
     private UserDto toUserDto(User user) {
+        boolean hasGoogleToken = user.getGoogleAccessToken() != null && !user.getGoogleAccessToken().isBlank();
+        boolean hasGithubToken = user.getGithubAccessToken() != null && !user.getGithubAccessToken().isBlank();
+
+        boolean googleExpired = hasGoogleToken && !oauthTokenService.isGoogleTokenValid(user);
+        boolean githubExpired = hasGithubToken && !oauthTokenService.isGithubTokenValid(user);
+
         return UserDto.builder()
                 .id(user.getId())
                 .email(user.getEmail())
                 .userName(user.getUserName())
-                .isGoogleConnected(user.getGoogleAccessToken() != null)
+                .isGoogleConnected(hasGoogleToken)
                 .isGoogleLogin(user.getGoogleId() != null)
-                .isGithubConnected(user.getGithubAccessToken() != null)
+                .isGithubConnected(hasGithubToken)
+                .isGoogleExpired(googleExpired)
+                .isGithubExpired(githubExpired)
                 .githubLogin(user.getGithubLogin())
                 .build();
     }

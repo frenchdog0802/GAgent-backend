@@ -14,6 +14,17 @@ import lombok.extern.slf4j.Slf4j;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    @ExceptionHandler(ProviderTokenExpiredException.class)
+    public ResponseEntity<Map<String, Object>> handleProviderTokenExpired(ProviderTokenExpiredException ex) {
+        log.warn("Provider token expired: {} — {}", ex.getProvider(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
+                "error", "provider_token_expired",
+                "provider", ex.getProvider(),
+                "message", ex.getMessage(),
+                "timestamp", Instant.now().toString()
+        ));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleException(Exception ex) {
         log.error("Unhandled exception: {}", ex.getMessage(), ex);

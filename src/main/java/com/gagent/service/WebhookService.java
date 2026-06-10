@@ -158,7 +158,6 @@ public class WebhookService {
                 .failingShaFull(fullSha)
                 .githubRunId(runId)
                 .status(CiWorkflowStatus.PENDING)
-                .testCommand("make test")
                 .build();
 
         CiWorkflow saved = ciWorkflowRepository.save(workflow);
