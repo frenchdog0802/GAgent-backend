@@ -34,6 +34,9 @@ public class GitHubAuthController {
     @Value("${app.frontend-url}")
     private String frontendUrl;
 
+    @Value("${app.backend-url}")
+    private String backendUrl;
+
     private final UserRepository userRepository;
     private final RestTemplate restTemplate = new RestTemplate();
 
@@ -144,9 +147,6 @@ public class GitHubAuthController {
     }
 
     private String buildRedirectUri(HttpServletRequest request) {
-        return UriComponentsBuilder.fromUriString(request.getRequestURL().toString())
-                .replacePath("/api/auth/github/callback")
-                .replaceQuery(null)
-                .build().toUriString();
+        return backendUrl.replaceAll("/+$", "") + "/api/auth/github/callback";
     }
 }

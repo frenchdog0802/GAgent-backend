@@ -33,6 +33,9 @@ public class GoogleAuthController {
     @Value("${app.frontend-url}")
     private String frontendUrl;
 
+    @Value("${app.backend-url}")
+    private String backendUrl;
+
     private final UserRepository userRepository;
     private final RestTemplate restTemplate = new RestTemplate();
 
@@ -105,10 +108,6 @@ public class GoogleAuthController {
     }
 
     private String buildRedirectUri(HttpServletRequest request) {
-        // Dynamically build the redirect URI based on the current request host and port
-        return UriComponentsBuilder.fromUriString(request.getRequestURL().toString())
-                .replacePath("/api/auth/google/callback")
-                .replaceQuery(null)
-                .build().toUriString();
+        return backendUrl.replaceAll("/+$", "") + "/api/auth/google/callback";
     }
 }
